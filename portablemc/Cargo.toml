@@ -18,7 +18,9 @@ thiserror.workspace = true
 serde.workspace = true
 serde_path_to_error.workspace = true
 serde_json.workspace = true
+serde_urlencoded = "0.7.1"
 
+sha2 = "0.11.0"
 uuid = { workspace = true, features = ["v5"] }
 chrono.workspace = true
 xmlparser.workspace = true
@@ -28,6 +30,7 @@ reqwest = { workspace = true, features = ["json"] }
 
 indexmap.workspace = true
 elsa.workspace = true
+base64 = "0.22.1"
 
 regex.workspace = true
 
@@ -38,6 +41,7 @@ dunce.workspace = true
 os_info.workspace = true
 dirs.workspace = true
 windows-registry.workspace = true
+rand = "0.10.1"
 
 sha1.workspace = true
 md5.workspace = true

@@ -4,37 +4,40 @@
 
 pub(crate) mod serde;
 
-use std::io::{Write as _, BufReader};
-use std::path::{Path, PathBuf};
 use std::collections::HashSet;
 use std::env;
 use std::fs;
+use std::io::{BufReader, Write as _};
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, FixedOffset};
 use regex::Regex;
 use uuid::Uuid;
 
-use crate::base::{self, check_file_advanced, Game, HandlerInto as _, LibraryDownload, LoadedLibrary, VersionChannel, LIBRARIES_URL};
-use crate::maven::Gav;
+use crate::base::{
+    self, Game, HandlerInto as _, LIBRARIES_URL, LibraryDownload, LoadedLibrary, VersionChannel,
+    check_file_advanced,
+};
 use crate::download;
+use crate::maven::Gav;
 use crate::msa;
 
-
 /// Static URL to the version manifest provided by Mojang.
-pub(crate) const VERSION_MANIFEST_URL: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+pub(crate) const VERSION_MANIFEST_URL: &str =
+    "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 
 /// An installer for supporting Mojang-provided versions. It provides support for various
-/// standard arguments such as demo mode, window resolution and quick play, it also 
+/// standard arguments such as demo mode, window resolution and quick play, it also
 /// provides various fixes for known issues of old versions.
-/// 
+///
 /// By default, this installer tries to handle every version that is not found in the
 /// hierarchy, if a version with that name exists in the Mojang's versions manifest, then
 /// it is fetched. This means that every missing version will try to fetch the manifest
-/// (using the cached version if relevant). This behavior can be changed by excluding 
-/// 
+/// (using the cached version if relevant). This behavior can be changed by excluding
+///
 /// Notes about various versions:
 /// - 1.19.3 metadata adds no parameter to specify extract directory for LWJGL (version
-///   3.3.1-build-7), therefore natives are extracted to 
+///   3.3.1-build-7), therefore natives are extracted to
 ///   '/tmp/lwjgl&lt;username&gt;/&lt;version&gt;'.
 #[derive(Debug, Clone)]
 pub struct Installer {
@@ -54,12 +57,12 @@ struct InstallerInner {
     resolution: Option<(u16, u16)>,
     disable_multiplayer: bool,
     disable_chat: bool,
-    auth_type: String,  // Empty to trigger default auth.
+    auth_type: String, // Empty to trigger default auth.
     auth_uuid: Uuid,
     auth_username: String,
     auth_token: String,
-    auth_xuid: String,  // Apparently used for Minecraft Telemetry
-    client_id: String,  // Apparently used for Minecraft Telemetry
+    auth_xuid: String, // Apparently used for Minecraft Telemetry
+    client_id: String, // Apparently used for Minecraft Telemetry
     fix_legacy_quick_play: bool,
     fix_legacy_proxy: bool,
     fix_legacy_merge_sort: bool,
@@ -69,17 +72,16 @@ struct InstallerInner {
 }
 
 impl Installer {
-
     /// Create a new installer with default configuration, using defaults directories.
-    /// 
-    /// This Mojang installer has all fixes enabled except LWJGL and missing version 
+    ///
+    /// This Mojang installer has all fixes enabled except LWJGL and missing version
     /// fetching is enabled.
     pub fn new(version: impl Into<Version>) -> Self {
         Self {
             base: base::Installer::new(String::new()),
             inner: InstallerInner {
                 version: version.into(),
-                fetch_excludes: Vec::new(),  // No exclude by default.
+                fetch_excludes: Vec::new(), // No exclude by default.
                 demo: false,
                 quick_play: None,
                 resolution: None,
@@ -97,7 +99,7 @@ impl Installer {
                 fix_legacy_resolution: true,
                 fix_broken_authlib: true,
                 fix_lwjgl: None,
-            }
+            },
         }
     }
 
@@ -113,7 +115,7 @@ impl Installer {
     }
 
     /// Get the underlying base installer through mutable reference.
-    /// 
+    ///
     /// *Note that the `version` property will be overwritten when installing.*
     #[inline]
     pub fn base_mut(&mut self) -> &mut base::Installer {
@@ -133,13 +135,13 @@ impl Installer {
         self
     }
 
-    /// Return the list of filters 
+    /// Return the list of filters
     #[inline]
     pub fn fetch_excludes(&self) -> &[FetchExclude] {
         &self.inner.fetch_excludes
     }
 
-    /// Clear all fetch exclude filters. See [`Self::fetch_excludes`] and 
+    /// Clear all fetch exclude filters. See [`Self::fetch_excludes`] and
     /// [`Self::add_fetch_exclude`]. **This is the default state when constructed.**
     pub fn clear_fetch_exclude(&mut self) -> &mut Self {
         self.inner.fetch_excludes.clear();
@@ -231,10 +233,10 @@ impl Installer {
         self
     }
 
-    /// Get the currently configured authentication UUID, may be nil (zero-filled) if not 
+    /// Get the currently configured authentication UUID, may be nil (zero-filled) if not
     /// configured.
-    /// 
-    /// Note that when installing, if this is nil then it will be defined using 
+    ///
+    /// Note that when installing, if this is nil then it will be defined using
     /// [`Self::set_auth_offline_hostname`].
     #[inline]
     pub fn auth_uuid(&self) -> Uuid {
@@ -242,8 +244,8 @@ impl Installer {
     }
 
     /// Get the currently configured authentication UUID, may be empty if not configured.
-    /// 
-    /// Note that when installing, if this is nil then it will be defined using 
+    ///
+    /// Note that when installing, if this is nil then it will be defined using
     /// [`Self::set_auth_offline_hostname`].
     #[inline]
     pub fn auth_username(&self) -> &str {
@@ -259,7 +261,7 @@ impl Installer {
     }
 
     /// Use offline session with the given UUID and username, note that the username will
-    /// be truncated 16 bytes at most (this function will panic if the truncation is not 
+    /// be truncated 16 bytes at most (this function will panic if the truncation is not
     /// on a valid UTF-8 character boundary).
     pub fn set_auth_offline(&mut self, uuid: Uuid, username: impl Into<String>) -> &mut Self {
         self.inner.auth_uuid = uuid;
@@ -277,35 +279,35 @@ impl Installer {
         self.reset_auth_online()
     }
 
-    /// Use offline session with the given username (initially truncated to 16 chars), 
-    /// the UUID is then derived from this username using the same derivation used by 
-    /// most Mojang clients (versions to be defined), this produces a MD5 (v3) UUID 
+    /// Use offline session with the given username (initially truncated to 16 chars),
+    /// the UUID is then derived from this username using the same derivation used by
+    /// most Mojang clients (versions to be defined), this produces a MD5 (v3) UUID
     /// with `OfflinePlayer:{username}` as the hashed string.
-    /// 
+    ///
     /// The advantage of this method is to produce the same UUID as the one that will
     /// be produced by Mojang's authlib when connecting to an offline-mode multiplayer
     /// server.
     pub fn set_auth_offline_username(&mut self, username: impl Into<String>) -> &mut Self {
-        
         self.inner.auth_username = username.into();
         self.inner.auth_username.truncate(16);
 
         let mut context = md5::Context::new();
-        context.write_fmt(format_args!("OfflinePlayer:{}", self.inner.auth_username)).unwrap();
-        
+        context
+            .write_fmt(format_args!("OfflinePlayer:{}", self.inner.auth_username))
+            .unwrap();
+
         self.inner.auth_uuid = uuid::Builder::from_bytes(context.compute().0)
             .with_variant(uuid::Variant::RFC4122)
             .with_version(uuid::Version::Md5)
             .into_uuid();
 
         self.reset_auth_online()
-
     }
 
-    /// Use offline session with the given username (initially truncated to 16 chars), 
-    /// the UUID is then derived from this username using a PMC-specific derivation of 
+    /// Use offline session with the given username (initially truncated to 16 chars),
+    /// the UUID is then derived from this username using a PMC-specific derivation of
     /// the username and the PMC namespace with SHA-1 (UUID v5).
-    /// 
+    ///
     /// Note that the produced UUID will not be used when playing on multiplayer servers
     /// (the server must also be in offline-mode), in this case the server gives you an
     /// arbitrary UUID that is not the one your game has been launched with. Most servers
@@ -315,27 +317,31 @@ impl Installer {
     pub fn set_auth_offline_username_legacy(&mut self, username: impl Into<String>) -> &mut Self {
         self.inner.auth_username = username.into();
         self.inner.auth_username.truncate(16);
-        self.inner.auth_uuid = Uuid::new_v5(&base::UUID_NAMESPACE, self.inner.auth_username.as_bytes());
+        self.inner.auth_uuid =
+            Uuid::new_v5(&base::UUID_NAMESPACE, self.inner.auth_username.as_bytes());
         self.reset_auth_online()
     }
 
-    /// Use offline session with a deterministic UUID, derived from this machine's 
+    /// Use offline session with a deterministic UUID, derived from this machine's
     /// hostname, the username is then derived from the UUID following the same logic
     /// as for [`Self::set_auth_offline_uuid`].
-    /// 
+    ///
     /// **This is the default UUID/username used if no auth is specified, so you don't
     /// need to call this function, except if you want to override previous auth.**
     pub fn set_auth_offline_hostname(&mut self) -> &mut Self {
-        self.set_auth_offline_uuid(Uuid::new_v5(&base::UUID_NAMESPACE, gethostname::gethostname().as_encoded_bytes()))
+        self.set_auth_offline_uuid(Uuid::new_v5(
+            &base::UUID_NAMESPACE,
+            gethostname::gethostname().as_encoded_bytes(),
+        ))
     }
 
     /// Use online authentication with the given Microsoft Account.
-    pub fn set_auth_msa(&mut self, account: &msa::Account) -> &mut Self {
-        self.inner.auth_uuid = account.uuid();
-        self.inner.auth_username = account.username().to_string();
-        self.inner.auth_token = account.access_token().to_string();
+    pub fn set_auth_msa(&mut self, account: &msa::MinecraftAccount) -> &mut Self {
+        self.inner.auth_uuid = account.uuid;
+        self.inner.auth_username = account.username.to_string();
+        self.inner.auth_token = account.access_token.to_string();
         self.inner.auth_type = "msa".to_string();
-        self.inner.auth_xuid = account.xuid().to_string();
+        self.inner.auth_xuid = account.xuid.to_string();
         self
     }
 
@@ -369,7 +375,7 @@ impl Installer {
     }
 
     /// When starting older alpha, beta and release up to 1.5, this allows legacy online
-    /// resources such as skins to be properly requested. The implementation is currently 
+    /// resources such as skins to be properly requested. The implementation is currently
     /// using `betacraft.uk` proxies, this is enabled by default.
     #[inline]
     pub fn fix_legacy_proxy(&self) -> bool {
@@ -399,7 +405,7 @@ impl Installer {
     }
 
     /// When starting older versions that don't support modern resolution arguments, this
-    /// fix will add arguments to force resolution of the initial window, this is enabled 
+    /// fix will add arguments to force resolution of the initial window, this is enabled
     /// by default.
     #[inline]
     pub fn fix_legacy_resolution(&self) -> bool {
@@ -435,17 +441,17 @@ impl Installer {
     }
 
     /// Changing the version of LWJGL, this support versions greater or equal to 3.2.3,
-    /// and also provides ARM support when the LWJGL version supports it. It's not 
+    /// and also provides ARM support when the LWJGL version supports it. It's not
     /// guaranteed to work with every version of Minecraft, and downgrading LWJGL version
     /// is not recommended.
-    /// 
+    ///
     /// If the given version is less than 3.2.3 this will do nothing.
     #[inline]
     pub fn set_fix_lwjgl(&mut self, lwjgl_version: impl Into<String>) -> &mut Self {
         self.inner.fix_lwjgl = Some(lwjgl_version.into());
         self
     }
-    
+
     /// Don't fix LWJGL version, see [`Self::set_fix_lwjgl`].
     #[inline]
     pub fn remove_fix_lwjgl(&mut self) -> &mut Self {
@@ -456,8 +462,8 @@ impl Installer {
     /// Install the given Mojang version from its identifier. This also supports alias
     /// identifiers such as "release" and "snapshot" that will be resolved, note that
     /// these identifiers are just those presents in the "latest" mapping of the
-    /// Mojang versions manifest. 
-    /// 
+    /// Mojang versions manifest.
+    ///
     /// If the given version is not found in the manifest then it's silently ignored and
     /// the version metadata must already exists.
     #[inline]
@@ -467,7 +473,6 @@ impl Installer {
 
     #[inline(never)]
     fn install_dyn(&mut self, handler: &mut dyn Handler) -> Result<Game> {
-        
         // Apply default offline auth, derived from hostname.
         if self.inner.auth_uuid.is_nil() || self.inner.auth_username.is_empty() {
             self.set_auth_offline_hostname();
@@ -479,9 +484,10 @@ impl Installer {
         } = self;
 
         let manifest = match self.inner.version {
-            Version::Release | 
-            Version::Snapshot => Some(Manifest::request((&mut *handler).into_download())?),
-            _ => None
+            Version::Release | Version::Snapshot => {
+                Some(Manifest::request((&mut *handler).into_download())?)
+            }
+            _ => None,
         };
 
         let version = match &self.inner.version {
@@ -491,13 +497,12 @@ impl Installer {
         };
 
         base.set_version(version);
-        
+
         // Let the handler find the "leaf" version.
         let mut leaf_version = String::new();
 
         // Scoping the temporary internal handler.
         let mut game = {
-
             let mut handler = InternalHandler {
                 inner: &mut *handler,
                 installer: &inner,
@@ -505,12 +510,11 @@ impl Installer {
                 manifest,
                 leaf_version: &mut leaf_version,
             };
-    
+
             // Same as above, we are giving a &mut dyn ref to avoid huge monomorphization.
             let res = base.install(&mut handler);
             handler.error?;
             res?
-
         };
 
         // Apply auth parameters.
@@ -521,13 +525,14 @@ impl Installer {
                 "auth_access_token" => inner.auth_token.clone(),
                 "auth_xuid" => inner.auth_xuid.clone(),
                 // Legacy parameter
-                "auth_session" if !inner.auth_token.is_empty() => 
-                    format!("token:{}:{}", inner.auth_token, inner.auth_uuid.as_simple()),
+                "auth_session" if !inner.auth_token.is_empty() => {
+                    format!("token:{}:{}", inner.auth_token, inner.auth_uuid.as_simple())
+                }
                 "auth_session" => String::new(),
                 "user_type" => inner.auth_type.clone(),
                 "user_properties" => format!("{{}}"),
                 "clientid" => inner.client_id.clone(),
-                _ => return None
+                _ => return None,
             })
         });
 
@@ -535,7 +540,6 @@ impl Installer {
         // handler, and if the feature is actually present (1.20 and after), if not
         // present we can try to use legacy arguments for supported quick play types.
         if let Some(quick_play) = &inner.quick_play {
-
             let quick_play_arg = match quick_play {
                 QuickPlay::Path { .. } => "quickPlayPath",
                 QuickPlay::Singleplayer { .. } => "quickPlaySingleplayer",
@@ -560,31 +564,30 @@ impl Installer {
 
             if !quick_play_supported && inner.fix_legacy_quick_play {
                 if let QuickPlay::Multiplayer { host, port } = quick_play {
-
                     game.game_args.extend([
-                        "--server".to_string(), host.clone(),
-                        "--port".to_string(), port.to_string(),
+                        "--server".to_string(),
+                        host.clone(),
+                        "--port".to_string(),
+                        port.to_string(),
                     ]);
 
                     quick_play_supported = true;
                     handler.on_event(Event::FixedLegacyQuickPlay);
-
                 }
             }
 
             if !quick_play_supported {
-                handler.on_event(Event::WarnUnsupportedQuickPlay {  });
+                handler.on_event(Event::WarnUnsupportedQuickPlay {});
             }
-
         }
 
         if inner.fix_legacy_proxy {
-
             // Checking as bytes because it's ASCII and we simply matching.
             let proxy_port = match leaf_version.as_bytes() {
-                [b'1', b'.', b'0' | b'1' | b'3' | b'4' | b'5'] |
-                [b'1', b'.', b'2' | b'3' | b'4' | b'5', b'.', ..] |
-                b"13w16a" | b"13w16b" => Some(11707),
+                [b'1', b'.', b'0' | b'1' | b'3' | b'4' | b'5']
+                | [b'1', b'.', b'2' | b'3' | b'4' | b'5', b'.', ..]
+                | b"13w16a"
+                | b"13w16b" => Some(11707),
                 id if id.starts_with(b"a1.0.") => Some(80),
                 id if id.starts_with(b"a1.1.") => Some(11702),
                 id if id.starts_with(b"a1.") => Some(11705),
@@ -595,45 +598,48 @@ impl Installer {
             if let Some(proxy_port) = proxy_port {
                 game.jvm_args.push(format!("-Dhttp.proxyHost=betacraft.uk"));
                 game.jvm_args.push(format!("-Dhttp.proxyPort={proxy_port}"));
-                handler.on_event(Event::FixedLegacyProxy { host: "betacraft.uk", port: proxy_port });
+                handler.on_event(Event::FixedLegacyProxy {
+                    host: "betacraft.uk",
+                    port: proxy_port,
+                });
             }
-
         }
 
-        if inner.fix_legacy_merge_sort && (leaf_version.starts_with("a1.") || leaf_version.starts_with("b1.")) {
-            game.jvm_args.push("-Djava.util.Arrays.useLegacyMergeSort=true".to_string());
+        if inner.fix_legacy_merge_sort
+            && (leaf_version.starts_with("a1.") || leaf_version.starts_with("b1."))
+        {
+            game.jvm_args
+                .push("-Djava.util.Arrays.useLegacyMergeSort=true".to_string());
             handler.on_event(Event::FixedLegacyMergeSort);
         }
 
         if let Some((width, height)) = inner.resolution {
-
             let mut resolution_supported = false;
             game.replace_args(|arg| {
                 let repl = match arg {
                     "resolution_width" => width.to_string(),
                     "resolution_height" => height.to_string(),
-                    _ => return None
+                    _ => return None,
                 };
                 resolution_supported = true;
                 Some(repl)
             });
 
             if !resolution_supported && inner.fix_legacy_resolution {
-
                 game.game_args.extend([
-                    "--width".to_string(), width.to_string(),
-                    "--height".to_string(), height.to_string(),
+                    "--width".to_string(),
+                    width.to_string(),
+                    "--height".to_string(),
+                    height.to_string(),
                 ]);
 
                 resolution_supported = true;
                 handler.on_event(Event::FixedLegacyResolution);
-
             }
 
             if !resolution_supported {
                 handler.on_event(Event::WarnUnsupportedResolution);
             }
-
         }
 
         if inner.disable_multiplayer {
@@ -645,9 +651,7 @@ impl Installer {
         }
 
         Ok(game)
-
     }
-
 }
 
 /// Events happening when installing.
@@ -657,7 +661,7 @@ pub enum Event<'a> {
     /// Forwarding a base event.
     Base(base::Event<'a>),
     /// When the given version is being loaded but the file has an invalid size,
-    /// SHA-1, or any other invalidating reason, it has been removed in order to 
+    /// SHA-1, or any other invalidating reason, it has been removed in order to
     /// download an up-to-date version.
     InvalidatedVersion { version: &'a str },
     /// The required version metadata is missing and so will be fetched.
@@ -704,7 +708,6 @@ impl Handler for () {
 
 /// Internal adapter trait for using it like other handlers.
 pub(crate) trait HandlerInto: Handler + Sized {
-    
     #[inline]
     fn into_base(self) -> impl base::Handler {
         pub(crate) struct Adapter<H: Handler>(pub H);
@@ -720,7 +723,6 @@ pub(crate) trait HandlerInto: Handler + Sized {
     fn into_download(self) -> impl download::Handler {
         self.into_base().into_download()
     }
-
 }
 
 impl<H: Handler> HandlerInto for H {}
@@ -735,9 +737,7 @@ pub enum Error {
     /// The LWJGL fix is enabled with a version that is not supported, maybe because
     /// it is too old (< 3.2.3) or because of your system not being supported.
     #[error("lwjgl fix not found: {version}")]
-    LwjglFixNotFound {
-        version: String,
-    },
+    LwjglFixNotFound { version: String },
 }
 
 impl<T: Into<base::Error>> From<T> for Error {
@@ -768,29 +768,20 @@ impl<T: Into<String>> From<T> for Version {
     }
 }
 
-/// This represent the optional Quick Play mode when launching the game. This is usually 
-/// not supported on versions older than 1.20 (23w14a), however a fix exists for 
+/// This represent the optional Quick Play mode when launching the game. This is usually
+/// not supported on versions older than 1.20 (23w14a), however a fix exists for
 /// supporting multiplayer Quick Play on older versions, other modes are unsupported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QuickPlay {
     /// Launch the game and follow instruction for Quick Play in the given path, relative
     /// to the working directory.
-    Path {
-        path: PathBuf,
-    },
+    Path { path: PathBuf },
     /// Launch the game and directly join the world given its name.
-    Singleplayer {
-        name: String,
-    },
+    Singleplayer { name: String },
     /// Launch the game and directly join the specified server address.
-    Multiplayer {
-        host: String,
-        port: u16,
-    },
+    Multiplayer { host: String, port: u16 },
     /// Launch the game and directly join the realm given its id.
-    Realms {
-        id: String,
-    },
+    Realms { id: String },
 }
 
 /// The different kind of patterns for filtering which versions are fetched or not.
@@ -812,34 +803,31 @@ pub struct Manifest {
 }
 
 impl Manifest {
-
     /// Request the Mojang versions' manifest.
     pub fn request(mut handler: impl download::Handler) -> Result<Self> {
-        return Self::request_dyn(&mut handler)
+        return Self::request_dyn(&mut handler);
     }
 
     fn request_dyn(handler: &mut dyn download::Handler) -> Result<Self> {
-
         let mut entry = download::single_cached(VERSION_MANIFEST_URL)
             .set_keep_open()
             .download(handler)?;
 
         let reader = BufReader::new(entry.take_handle().unwrap());
         let mut deserializer = serde_json::Deserializer::from_reader(reader);
-        let manifest = serde_path_to_error::deserialize::<_, Box<serde::MojangManifest>>(&mut deserializer)
-            .map_err(|e| base::Error::new_json_file(e, entry.file()))?;
+        let manifest =
+            serde_path_to_error::deserialize::<_, Box<serde::MojangManifest>>(&mut deserializer)
+                .map_err(|e| base::Error::new_json_file(e, entry.file()))?;
 
         Ok(Self { inner: manifest })
-
     }
 
     /// Iterator over all versions in the manifest.
-    /// 
-    /// This method currently returns an abstract iterator because the API is not 
+    ///
+    /// This method currently returns an abstract iterator because the API is not
     /// stabilized yet.
     pub fn iter(&self) -> impl Iterator<Item = ManifestVersion<'_>> + use<'_> {
-        self.inner.versions.iter()
-            .map(ManifestVersion)
+        self.inner.versions.iter().map(ManifestVersion)
     }
 
     /// Return the latest release version name.
@@ -866,11 +854,12 @@ impl Manifest {
 
     /// Get a handle to a version information from its name.
     pub fn find_by_name(&self, name: &str) -> Option<ManifestVersion<'_>> {
-        self.inner.versions.iter()
+        self.inner
+            .versions
+            .iter()
             .find(|v| v.id == name)
             .map(ManifestVersion)
     }
-
 }
 
 /// A handle to a version in the Mojang versions manifest.
@@ -878,9 +867,8 @@ impl Manifest {
 pub struct ManifestVersion<'a>(&'a serde::MojangManifestVersion);
 
 impl<'a> ManifestVersion<'a> {
-
     /// The name of this version.
-    /// 
+    ///
     /// See [`base::LoadedVersion::name`] for more information on the naming.
     pub fn name(&self) -> &'a str {
         &self.0.id
@@ -896,7 +884,7 @@ impl<'a> ManifestVersion<'a> {
         &self.0.time
     }
 
-    /// The release time for this version. 
+    /// The release time for this version.
     pub fn release_time(&self) -> &'a DateTime<FixedOffset> {
         &self.0.release_time
     }
@@ -915,7 +903,6 @@ impl<'a> ManifestVersion<'a> {
     pub fn sha1(&self) -> Option<&'a [u8; 20]> {
         self.0.download.sha1.as_deref()
     }
-
 }
 
 // ========================== //
@@ -937,23 +924,14 @@ struct InternalHandler<'a> {
 }
 
 impl<'a> base::Handler for InternalHandler<'a> {
-    
     fn on_event(&mut self, mut event: base::Event) {
-        
         let ret = match event {
-            base::Event::FilterFeatures { 
-                ref mut features,
-            } => self.filter_features(*features),
-            base::Event::LoadedHierarchy {
-                hierarchy,
-            } => self.loaded_hierarchy(hierarchy),
-            base::Event::LoadVersion { 
-                version, 
+            base::Event::FilterFeatures { ref mut features } => self.filter_features(*features),
+            base::Event::LoadedHierarchy { hierarchy } => self.loaded_hierarchy(hierarchy),
+            base::Event::LoadVersion { version, file } => self.load_version(version, file),
+            base::Event::NeedVersion {
+                version,
                 file,
-            } => self.load_version(version, file),
-            base::Event::NeedVersion { 
-                version, 
-                file, 
                 ref mut retry,
             } => match self.need_version(version, file) {
                 Ok(true) => {
@@ -962,28 +940,22 @@ impl<'a> base::Handler for InternalHandler<'a> {
                 }
                 Ok(false) => Ok(()),
                 Err(e) => Err(e),
-            }
-            base::Event::FilterLibraries { 
-                ref mut libraries,
-            } => self.filter_libraries(*libraries),
-            _ => Ok(())
+            },
+            base::Event::FilterLibraries { ref mut libraries } => self.filter_libraries(*libraries),
+            _ => Ok(()),
         };
-        
+
         if let Err(e) = ret {
             self.error = Err(e);
             return;
         }
 
         self.inner.on_event(Event::Base(event));
-
     }
-
 }
 
 impl InternalHandler<'_> {
-
     fn filter_features(&mut self, features: &mut HashSet<String>) -> Result<()> {
-        
         if self.installer.demo {
             features.insert("is_demo_user".to_string());
         }
@@ -993,16 +965,18 @@ impl InternalHandler<'_> {
         }
 
         if let Some(quick_play) = &self.installer.quick_play {
-            features.insert(match quick_play {
-                QuickPlay::Path { .. } => "has_quick_plays_support",
-                QuickPlay::Singleplayer { .. } => "is_quick_play_singleplayer",
-                QuickPlay::Multiplayer { .. } => "is_quick_play_multiplayer",
-                QuickPlay::Realms { .. } => "is_quick_play_realms",
-            }.to_string());
+            features.insert(
+                match quick_play {
+                    QuickPlay::Path { .. } => "has_quick_plays_support",
+                    QuickPlay::Singleplayer { .. } => "is_quick_play_singleplayer",
+                    QuickPlay::Multiplayer { .. } => "is_quick_play_multiplayer",
+                    QuickPlay::Realms { .. } => "is_quick_play_realms",
+                }
+                .to_string(),
+            );
         }
 
         Ok(())
-
     }
 
     fn loaded_hierarchy(&mut self, hierarchy: &[base::LoadedVersion]) -> Result<()> {
@@ -1011,16 +985,12 @@ impl InternalHandler<'_> {
     }
 
     fn load_version(&mut self, version: &str, file: &Path) -> Result<()> {
-
         // If any pattern matches, return Ok.
         for pattern in &self.installer.fetch_excludes {
             match pattern {
-                FetchExclude::All => 
-                    return Ok(()),
-                FetchExclude::Exact(name) if name == version => 
-                    return Ok(()),
-                FetchExclude::Regex(regex) if regex.is_match(version) => 
-                    return Ok(()),
+                FetchExclude::All => return Ok(()),
+                FetchExclude::Exact(name) if name == version => return Ok(()),
+                FetchExclude::Regex(regex) if regex.is_match(version) => return Ok(()),
                 _ => (),
             }
         }
@@ -1028,7 +998,9 @@ impl InternalHandler<'_> {
         // Only ensure that the manifest is loaded after checking fetch exclude.
         let manifest = match self.manifest {
             Some(ref manifest) => manifest,
-            None => self.manifest.insert(Manifest::request((&mut *self.inner).into_download())?)
+            None => self
+                .manifest
+                .insert(Manifest::request((&mut *self.inner).into_download())?),
         };
 
         // Unwrap because we checked the manifest in the condition.
@@ -1037,43 +1009,42 @@ impl InternalHandler<'_> {
         };
 
         if !check_file_advanced(file, version.size(), version.sha1(), true)? {
-            
-            fs::remove_file(file)
-                .map_err(|e| base::Error::new_io_file(e, file))?;
-            
-            self.inner.on_event(Event::InvalidatedVersion { version: version.name() });
-        
+            fs::remove_file(file).map_err(|e| base::Error::new_io_file(e, file))?;
+
+            self.inner.on_event(Event::InvalidatedVersion {
+                version: version.name(),
+            });
         }
 
         Ok(())
-
     }
 
     fn need_version(&mut self, version: &str, file: &Path) -> Result<bool> {
-
         let Some(manifest) = self.manifest.as_ref() else {
             return Ok(false);
         };
-        
+
         let Some(version) = manifest.find_by_name(version) else {
             return Ok(false);
         };
-        
-        self.inner.on_event(Event::FetchVersion { version: version.name() });
-        
+
+        self.inner.on_event(Event::FetchVersion {
+            version: version.name(),
+        });
+
         download::single(version.url(), file)
             .set_expected_size(version.size())
             .set_expected_sha1(version.sha1().copied())
             .download((&mut *self.inner).into_download())?;
 
-        self.inner.on_event(Event::FetchedVersion { version: version.name() });
+        self.inner.on_event(Event::FetchedVersion {
+            version: version.name(),
+        });
 
         Ok(true)
-
     }
 
     fn filter_libraries(&mut self, libraries: &mut Vec<LoadedLibrary>) -> Result<()> {
-        
         if self.installer.fix_broken_authlib {
             self.apply_fix_broken_authlib(&mut *libraries)?;
         }
@@ -1083,58 +1054,53 @@ impl InternalHandler<'_> {
         }
 
         Ok(())
-
     }
 
     fn apply_fix_broken_authlib(&mut self, libraries: &mut Vec<LoadedLibrary>) -> Result<()> {
-
         // Unwrap because we don't exceed length limit for sure.
         let target_gav = Gav::new("com.mojang", "authlib", "2.1.28", None, None).unwrap();
         let pos = libraries.iter().position(|lib| lib.name == target_gav);
-    
-        if let Some(pos) = pos {
 
-            libraries[pos].path = None;  // Ensure that the path is recomputed.
+        if let Some(pos) = pos {
+            libraries[pos].path = None; // Ensure that the path is recomputed.
             libraries[pos].name = libraries[pos].name.with_version("2.2.30").unwrap();
             libraries[pos].download = Some(LibraryDownload {
                 url: format!("{LIBRARIES_URL}{}", libraries[pos].name.url()),
                 size: Some(87497),
-                sha1: Some([0xd6, 0xe6, 0x77, 0x19, 0x9a, 0xa6, 0xb1, 0x9c, 0x4a, 0x9a, 0x2e, 0x72, 0x50, 0x34, 0x14, 0x9e, 0xb3, 0xe7, 0x46, 0xf8]),
+                sha1: Some([
+                    0xd6, 0xe6, 0x77, 0x19, 0x9a, 0xa6, 0xb1, 0x9c, 0x4a, 0x9a, 0x2e, 0x72, 0x50,
+                    0x34, 0x14, 0x9e, 0xb3, 0xe7, 0x46, 0xf8,
+                ]),
             });
 
             self.inner.on_event(Event::FixedBrokenAuthlib);
-
         }
 
         Ok(())
-    
     }
-    
+
     fn apply_fix_lwjgl(&mut self, libraries: &mut Vec<LoadedLibrary>, version: &str) -> Result<()> {
-    
         let Some(("", minor_patch)) = version.split_once("3.") else {
-            return Err(Error::LwjglFixNotFound { 
+            return Err(Error::LwjglFixNotFound {
                 version: version.to_string(),
             });
         };
 
         if minor_patch != "2.3" {
-            
             let (minor, _) = minor_patch.split_once('.').unwrap_or((minor_patch, ""));
             let Ok(minor) = minor.parse::<u32>() else {
-                return Err(Error::LwjglFixNotFound { 
+                return Err(Error::LwjglFixNotFound {
                     version: version.to_string(),
                 });
             };
 
             if minor < 3 {
-                return Err(Error::LwjglFixNotFound { 
+                return Err(Error::LwjglFixNotFound {
                     version: version.to_string(),
                 });
             }
-
         }
-        
+
         let classifier = match (env::consts::OS, env::consts::ARCH) {
             ("windows", "x86") => "natives-windows-x86",
             ("windows", "x86_64") => "natives-windows",
@@ -1144,27 +1110,31 @@ impl InternalHandler<'_> {
             ("linux", "aarch64") => "natives-linux-arm64",
             ("macos", "x86_64") => "natives-macos",
             ("macos", "aarch64") if version != "3.2.3" => "natives-macos-arm64",
-            _ => return Err(Error::LwjglFixNotFound { 
-                version: version.to_string(),
-            })
+            _ => {
+                return Err(Error::LwjglFixNotFound {
+                    version: version.to_string(),
+                });
+            }
         };
-    
+
         // Contains to-be-expected unique LWJGL libraries, with the classifier.
         let mut lwjgl_libs = Vec::new();
-    
+
         // Start by not retaining libraries with classifiers (natives).
         libraries.retain_mut(|lib| {
             if let ("org.lwjgl", "jar") = (lib.name.group(), lib.name.extension()) {
                 if lib.name.classifier().is_none() {
-                    if let Some(new_name) = lib.name.with_version(version) 
-                    && let Some(new_classifier_name) = new_name.with_classifier(Some(classifier)) {
+                    if let Some(new_name) = lib.name.with_version(version)
+                        && let Some(new_classifier_name) =
+                            new_name.with_classifier(Some(classifier))
+                    {
                         lib.path = None;
-                        lib.download = None;  // Will be updated afterward.
+                        lib.download = None; // Will be updated afterward.
                         lib.name = new_name;
                         lwjgl_libs.push(new_classifier_name);
                         true
                     } else {
-                        // Do not retain if we got an error create the new version, it 
+                        // Do not retain if we got an error create the new version, it
                         // might be too long and we don't want to unwrap.
                         false
                     }
@@ -1176,7 +1146,7 @@ impl InternalHandler<'_> {
                 true
             }
         });
-    
+
         // Now we add the classifiers for each LWJGL lib.
         libraries.extend(lwjgl_libs.into_iter().map(|gav| {
             LoadedLibrary {
@@ -1186,17 +1156,19 @@ impl InternalHandler<'_> {
                 natives: false,
             }
         }));
-    
+
         // Finally we update the download source.
         for lib in libraries {
             if let ("org.lwjgl", "jar") = (lib.name.group(), lib.name.extension()) {
                 let url = format!("https://repo1.maven.org/maven2/{}", lib.name.url());
-                lib.download = Some(LibraryDownload { url, size: None, sha1: None });
+                lib.download = Some(LibraryDownload {
+                    url,
+                    size: None,
+                    sha1: None,
+                });
             }
         }
 
         Ok(())
-    
     }
-
 }

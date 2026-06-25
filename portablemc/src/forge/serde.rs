@@ -1,5 +1,5 @@
 //! JSON schemas structures for serde deserialization.
-//! 
+//!
 //! This module is internal to the module because it might be modified sooner or later
 //! to fix issues with Forge installers.
 
@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use crate::maven::Gav;
 
 use crate::base;
-
 
 /// For loader >= 1.12.2-14.23.5.2851
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -63,14 +62,12 @@ pub struct InstallDataEntry {
 }
 
 impl InstallDataEntry {
-
     pub fn get(&self, side: InstallSide) -> &str {
         match side {
             InstallSide::Client => &self.client,
             InstallSide::Server => &self.server,
         }
     }
-
 }
 
 /// For loader <= 1.12.2-14.23.5.2847
@@ -100,12 +97,10 @@ pub enum InstallSide {
 }
 
 impl InstallSide {
-
     pub fn as_str(self) -> &'static str {
         match self {
             InstallSide::Client => "client",
             InstallSide::Server => "server",
         }
     }
-
 }

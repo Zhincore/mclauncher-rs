@@ -1,4 +1,4 @@
-//! Automated installation tests with verification of the events ordering for various 
+//! Automated installation tests with verification of the events ordering for various
 //! specific versions metadata.
 
 use std::path::{Path, PathBuf};
@@ -7,7 +7,6 @@ use std::{env, fs, io};
 use regex::Regex;
 
 use portablemc::base::{self, JvmPolicy};
-
 
 macro_rules! def_checks {
     ( $fn_name:ident, $( $rem:tt )* ) => {
@@ -21,16 +20,11 @@ macro_rules! def_checks {
     () => {};
 }
 
-def_checks![
-    recurse, 
-    client_not_found,
-    libraries,
-];
+def_checks![recurse, client_not_found, libraries,];
 
 /// Common function to check a predefined version, placed in the "data" directory, and
 /// the triggering order of its events.
 fn check(version: &str) {
-    
     let data_dir = {
         let mut buf = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         buf.push("tests");
@@ -43,14 +37,15 @@ fn check(version: &str) {
     let expected_log = {
         match fs::read_to_string(data_dir.join(format!("{version}.{}.log", env::consts::OS))) {
             Ok(log) => log,
-            Err(e) if e.kind() == io::ErrorKind::NotFound =>
-                fs::read_to_string(data_dir.join(format!("{version}.log"))).unwrap(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                fs::read_to_string(data_dir.join(format!("{version}.log"))).unwrap()
+            }
             Err(e) => Err(e).unwrap(),
         }
     };
     let expected_logs = expected_log.lines().map(str::to_string).collect::<Vec<_>>();
     drop(expected_log);
-    
+
     fs::create_dir_all(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let tmp_main_dir = tempfile::Builder::new()
         .prefix("")
@@ -71,9 +66,11 @@ fn check(version: &str) {
     let mut inst = base::Installer::new(version);
     inst.set_main_dir(tmp_main_dir.to_path_buf());
     inst.set_jvm_policy(JvmPolicy::Static(PathBuf::new()));
-    match inst.install(TestHandler { logs: &mut actual_logs }) {
+    match inst.install(TestHandler {
+        logs: &mut actual_logs,
+    }) {
         Ok(_game) => {}
-        Err(base::Error::DownloadResourcesCancelled {  }) => {}
+        Err(base::Error::DownloadResourcesCancelled {}) => {}
         Err(e) => {
             actual_logs.push(format!("{e:?}"));
         }
@@ -83,7 +80,6 @@ fn check(version: &str) {
 
     // Only remove it here so when the test did not panic.
     fs::remove_dir_all(&tmp_main_dir).unwrap();
-
 }
 
 /// Replace macro of the form `$<name>(<content>)` by giving the content to the closure
@@ -92,14 +88,14 @@ fn replace_macro<F>(s: &mut String, name: &str, mut func: F)
 where
     F: FnMut(&str) -> String,
 {
-
     let open_pat = format!("${name}(");
     let mut cursor = 0;
 
     while let Some(open_idx) = s[cursor..].find(&open_pat) {
-
         let open_idx = cursor + open_idx;
-        let Some(close_idx) = s[open_idx + open_pat.len()..].find(')') else { break };
+        let Some(close_idx) = s[open_idx + open_pat.len()..].find(')') else {
+            break;
+        };
         let close_idx = open_idx + open_pat.len() + close_idx + 1;
         cursor = close_idx;
 
@@ -109,18 +105,11 @@ where
         let repl_len = close_idx - open_idx;
         let repl_diff = value.len() as isize - repl_len as isize;
         cursor = cursor.checked_add_signed(repl_diff).unwrap();
-
     }
-
 }
 
 /// Compare expected logs and actual logs, also checking for macros in expected string.
-fn assert_logs_eq(
-    expected_logs: Vec<String>, 
-    actual_logs: Vec<String>,
-    tmp_main_dir: &Path,
-) {
-
+fn assert_logs_eq(expected_logs: Vec<String>, actual_logs: Vec<String>, tmp_main_dir: &Path) {
     let mut expected_logs_it = expected_logs.into_iter().peekable();
     let mut actual_logs_it = actual_logs.into_iter().peekable();
 
@@ -129,7 +118,6 @@ fn assert_logs_eq(
     let mut regex_cache = None::<Regex>;
 
     loop {
-        
         let Some(expected_log) = expected_logs_it.peek_mut() else {
             while let Some(actual_log) = actual_logs_it.next() {
                 eprintln!("== Expected less line");
@@ -152,7 +140,7 @@ fn assert_logs_eq(
             valid = false;
             break;
         };
-        
+
         let expected_log = &*expected_log;
         let actual_log = &*actual_log;
 
@@ -161,11 +149,11 @@ fn assert_logs_eq(
         eprintln!("act: {actual_log}");
 
         if let Some(regex_str) = expected_log.strip_prefix("$ignore_many ") {
-            
             let regex = match &regex_cache {
                 Some(regex) if regex.as_str() == regex_str => regex,
                 _ => {
-                    let regex = Regex::new(regex_str).expect("failed to compile regex for $ignore_many");
+                    let regex =
+                        Regex::new(regex_str).expect("failed to compile regex for $ignore_many");
                     regex_cache.insert(regex)
                 }
             };
@@ -176,9 +164,7 @@ fn assert_logs_eq(
                 expected_logs_it.next();
                 eprintln!("== Retrying...");
             }
-
         } else if let Some(regex_str) = expected_log.strip_prefix("$ignore_once ") {
-            
             let regex = Regex::new(regex_str).expect("failed to compile regex for $ignore_once");
 
             if regex.is_match(&actual_log) {
@@ -188,7 +174,6 @@ fn assert_logs_eq(
                 valid = false;
                 break;
             }
-
         } else if expected_log != actual_log {
             valid = false;
             break;
@@ -196,17 +181,15 @@ fn assert_logs_eq(
             expected_logs_it.next();
             actual_logs_it.next();
         }
-
     }
 
     if !valid {
         panic!("Incoherent, read above!");
     }
-
 }
 
 /// The handler used to debug event when testing version installation. This handler stores
-/// every method invocation as a debug string that can later be matched against an 
+/// every method invocation as a debug string that can later be matched against an
 /// expected trace.
 #[derive(Debug)]
 struct TestHandler<'a> {
@@ -219,14 +202,12 @@ impl base::Handler for TestHandler<'_> {
             base::Event::DownloadResources { cancel } => {
                 *cancel = true;
             }
-            base::Event::DownloadProgress { .. } |
-            base::Event::DownloadedResources { .. } |
-            base::Event::ExtractedBinaries { .. } => {
+            base::Event::DownloadProgress { .. }
+            | base::Event::DownloadedResources { .. }
+            | base::Event::ExtractedBinaries { .. } => {
                 return;
             }
-            event => {
-                self.logs.push(format!("{event:?}"))
-            }
+            event => self.logs.push(format!("{event:?}")),
         }
     }
 }

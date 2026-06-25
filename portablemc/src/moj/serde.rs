@@ -4,7 +4,6 @@ use chrono::{DateTime, FixedOffset};
 
 use crate::base;
 
-
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MojangManifest {

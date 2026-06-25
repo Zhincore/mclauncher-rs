@@ -1,27 +1,26 @@
 //! Parallel batch HTTP(S) download implementation.
-//! 
-//! Partially inspired by: 
+//!
+//! Partially inspired by:
 //! <https://patshaughnessy.net/2020/1/20/downloading-100000-files-using-async-rust>
 
+use std::cmp::Ordering;
+use std::error;
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::iter::FusedIterator;
-use std::cmp::Ordering;
 use std::path::Path;
-use std::{env, mem};
 use std::sync::Arc;
-use std::error;
+use std::{env, mem};
 
 use sha1::{Digest, Sha1};
 
 use reqwest::{Client, StatusCode, header};
 
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::fs::{self, File};
-use tokio::task::JoinSet;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 
 use crate::path::PathBufExt;
-
 
 /// Download a single entry from the given URL to the given file.
 pub fn single(url: impl Into<Box<str>>, file: impl Into<Box<Path>>) -> Single {
@@ -37,7 +36,6 @@ pub fn single_cached(url: impl Into<Box<str>>) -> Single {
 pub struct Single(Entry);
 
 impl Single {
-
     #[inline]
     pub fn url(&self) -> &str {
         self.0.url()
@@ -80,22 +78,18 @@ impl Single {
 
     /// Download this singe entry, returning success or error entry depending on the
     /// result.
-    /// 
+    ///
     /// This is internally starting an asynchronous Tokio runtime and block on it, so
     /// this function will just panic if launched inside another runtime!
     #[must_use]
     pub fn download(&mut self, mut handler: impl Handler) -> Result<EntrySuccess, EntryError> {
-
-        let client = crate::http::client()
-            .map_err(|e| EntryError { 
-                core: self.0.core.clone(), 
-                kind: EntryErrorKind::new_reqwest(e),
-            })?;
+        let client = crate::http::client().map_err(|e| EntryError {
+            core: self.0.core.clone(),
+            kind: EntryErrorKind::new_reqwest(e),
+        })?;
 
         crate::tokio::sync(download_single(client, &mut handler, &self.0))
-
     }
-
 }
 
 /// A list of pending download that can be all downloaded at once.
@@ -106,7 +100,6 @@ pub struct Batch {
 }
 
 impl Batch {
-
     /// Create a new empty download list.
     #[inline]
     pub fn new() -> Self {
@@ -135,8 +128,8 @@ impl Batch {
 
     /// Insert a new entry to be downloaded in this download batch, this entry don't
     /// need a file because it is purely cached and so the file is derived from the URL.
-    /// It is constructed from a standard cache directory called `portablemc-cache` 
-    /// located in a standard user cache directory (or system tmp as a fallback), 
+    /// It is constructed from a standard cache directory called `portablemc-cache`
+    /// located in a standard user cache directory (or system tmp as a fallback),
     /// the file name in that directory is the hash of the URL.
     pub fn push_cached(&mut self, url: impl Into<Box<str>>) -> &mut Entry {
         self.entries.push(Entry::new_cached(url.into()));
@@ -151,21 +144,25 @@ impl Batch {
         &mut self.entries[index]
     }
 
-    /// Download this whole batch, the batch is cleared if returning ok. It's left 
+    /// Download this whole batch, the batch is cleared if returning ok. It's left
     /// untouched if it returns an error and no file is downloaded.
-    /// 
+    ///
     /// This is internally starting an asynchronous Tokio runtime and block on it, so
     /// this function will just panic if launched inside another runtime!
     pub fn download(&mut self, mut handler: impl Handler) -> reqwest::Result<BatchResult> {
         let client = crate::http::client()?;
         let entries = mem::take(&mut self.entries);
-        Ok(crate::tokio::sync(download_many(client, &mut handler, 40, entries)))
+        Ok(crate::tokio::sync(download_many(
+            client,
+            &mut handler,
+            40,
+            entries,
+        )))
     }
-
 }
 
-/// Represent the core information of an entry, its URL and the path where it's 
-/// downloaded. We put this in its own structure to ensure that these values are always 
+/// Represent the core information of an entry, its URL and the path where it's
+/// downloaded. We put this in its own structure to ensure that these values are always
 /// contiguous and this improves the copy of this structure when actually copied (when
 /// moved at assembly level).
 #[derive(Debug, Clone)]
@@ -199,13 +196,9 @@ pub struct Entry {
 }
 
 impl Entry {
-
     fn new(url: Box<str>, file: Box<Path>) -> Self {
         Self {
-            core: EntryCore {
-                url,
-                file,
-            },
+            core: EntryCore { url, file },
             expected_size: None,
             expected_sha1: None,
             use_cache: false,
@@ -215,7 +208,6 @@ impl Entry {
     }
 
     fn new_cached(url: Box<str>) -> Self {
-        
         let url_digest = {
             let mut sha1 = Sha1::new();
             sha1.update(&*url);
@@ -223,8 +215,7 @@ impl Entry {
         };
 
         // Fallback to the tmp directory.
-        let mut file = dirs::cache_dir()
-            .unwrap_or(env::temp_dir());
+        let mut file = dirs::cache_dir().unwrap_or(env::temp_dir());
 
         file.push("portablemc-cache");
         file.push(url_digest);
@@ -232,7 +223,6 @@ impl Entry {
         let mut ret = Self::new(url, file.into_boxed_path());
         ret.set_use_cache();
         ret
-
     }
 
     #[inline]
@@ -268,7 +258,7 @@ impl Entry {
     }
 
     /// After the file has been successfully downloaded, keep the handle opened so it
-    /// can be retrieved via [`EntrySuccess::handle`] related methods. The file's 
+    /// can be retrieved via [`EntrySuccess::handle`] related methods. The file's
     /// cursor is rewind to the start.
     #[inline]
     pub fn set_keep_open(&mut self) -> &mut Self {
@@ -287,7 +277,7 @@ impl Entry {
     /// and its optional size and SHA-1 will be only checked when actually downloaded.
     /// Also, this implies that if the program has no internet access then it will use
     /// the cached version if existing.
-    /// 
+    ///
     /// This is usually not needed to call this function, prefer [`Batch::push_cached`].
     #[inline]
     pub fn set_use_cache(&mut self) -> &mut Self {
@@ -300,19 +290,18 @@ impl Entry {
         self.use_cache
     }
 
-    /// Change the maximum retry count, this is used to automatically retry upon 
+    /// Change the maximum retry count, this is used to automatically retry upon
     /// client-side connection problems.
-    /// 
+    ///
     /// The default value is 2 retries, which is purely arbitral.
     #[inline]
     pub fn set_max_retry(&mut self, count: u8) -> &mut Self {
         self.max_retry = count;
         self
     }
-
 }
 
-/// When a download batch has been downloaded, this returned completed batch contains, 
+/// When a download batch has been downloaded, this returned completed batch contains,
 /// for each entry, it's success or not.
 #[derive(Debug)]
 pub struct BatchResult {
@@ -323,7 +312,6 @@ pub struct BatchResult {
 }
 
 impl BatchResult {
-
     /// Return the total number of entries pushed into this download batch.
     #[inline]
     pub fn len(&self) -> usize {
@@ -384,14 +372,17 @@ impl BatchResult {
             Ok(self)
         }
     }
-
 }
 
 /// To allow creation of a batch result from a single download.
 impl From<Result<EntrySuccess, EntryError>> for BatchResult {
     fn from(value: Result<EntrySuccess, EntryError>) -> Self {
         Self {
-            errors: if value.is_err() { Box::new([0]) } else { Box::new([]) },
+            errors: if value.is_err() {
+                Box::new([0])
+            } else {
+                Box::new([])
+            },
             entries: Box::new([value]),
         }
     }
@@ -415,17 +406,16 @@ impl From<EntryError> for BatchResult {
     }
 }
 
-/// Iterator for successful 
+/// Iterator for successful
 #[derive(Debug)]
 pub struct BatchResultSuccessesIter<'a> {
     entries: std::slice::Iter<'a, Result<EntrySuccess, EntryError>>,
     count: usize,
 }
 
-impl FusedIterator for BatchResultSuccessesIter<'_> { }
-impl ExactSizeIterator for BatchResultSuccessesIter<'_> { }
+impl FusedIterator for BatchResultSuccessesIter<'_> {}
+impl ExactSizeIterator for BatchResultSuccessesIter<'_> {}
 impl<'a> Iterator for BatchResultSuccessesIter<'a> {
-
     type Item = &'a EntrySuccess;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -440,20 +430,18 @@ impl<'a> Iterator for BatchResultSuccessesIter<'a> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.count, Some(self.count))
     }
-
 }
 
-/// Iterator for successful 
+/// Iterator for successful
 #[derive(Debug)]
 pub struct BatchResultErrorsIter<'a> {
     errors: std::slice::Iter<'a, usize>,
     entries: &'a [Result<EntrySuccess, EntryError>],
 }
 
-impl FusedIterator for BatchResultErrorsIter<'_> { }
-impl ExactSizeIterator for BatchResultErrorsIter<'_> { }
+impl FusedIterator for BatchResultErrorsIter<'_> {}
+impl ExactSizeIterator for BatchResultErrorsIter<'_> {}
 impl<'a> Iterator for BatchResultErrorsIter<'a> {
-
     type Item = &'a EntryError;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -465,7 +453,6 @@ impl<'a> Iterator for BatchResultErrorsIter<'a> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.errors.size_hint()
     }
-
 }
 
 /// State of a successfully downloaded entry.
@@ -486,7 +473,6 @@ struct EntrySuccessInner {
 }
 
 impl EntrySuccess {
-
     #[inline]
     pub fn url(&self) -> &str {
         &self.core.url
@@ -530,7 +516,7 @@ impl EntrySuccess {
 
     /// Take the internal handle if the entry was configured with `keep_open` option, and
     /// read the entire file to a string.
-    /// 
+    ///
     /// For now internal because it's being tested...
     pub(crate) fn read_handle_to_string(&mut self) -> Option<io::Result<String>> {
         let mut handle = self.take_handle()?;
@@ -540,7 +526,6 @@ impl EntrySuccess {
             Err(e) => Some(Err(e)),
         }
     }
-
 }
 
 /// State of an entry that failed to download, it also acts as a standard error type.
@@ -568,18 +553,17 @@ pub enum EntryErrorKind {
     InvalidStatus(u16),
     /// A generic error type for internal and third-party errors that may change depending
     /// on the actual implementation.
-    /// 
+    ///
     /// The current implementation yields the following error types:
-    /// 
+    ///
     /// - [`std::io::Error`] for any I/O error related to opening and writing local files.
-    /// 
+    ///
     /// - [`reqwest::Error`] for any error related to HTTP requests.
     #[error("internal: {0}")]
     Internal(#[source] Box<dyn error::Error + Send + Sync>),
 }
 
 impl EntryErrorKind {
-
     #[inline]
     fn new_io(e: io::Error) -> Self {
         Self::Internal(Box::new(e))
@@ -589,11 +573,9 @@ impl EntryErrorKind {
     fn new_reqwest(e: reqwest::Error) -> Self {
         Self::Internal(Box::new(e))
     }
-
 }
 
 impl EntryError {
-
     #[inline]
     pub fn url(&self) -> &str {
         &self.core.url
@@ -608,13 +590,12 @@ impl EntryError {
     pub fn kind(&self) -> &EntryErrorKind {
         &self.kind
     }
-
 }
 
 /// A handle for watching a batch download progress.
 pub trait Handler {
     /// Notification of a download progress, the download should be considered done when
-    /// 'count' is equal to 'total_count'. This is called anyway at the beginning and at 
+    /// 'count' is equal to 'total_count'. This is called anyway at the beginning and at
     /// the end of the download. Note that the final given 'size' may be greater than
     /// 'total_size' in case of unknown expected size, which 'total_size' is the sum.
     fn on_progress(&mut self, count: u32, total_count: u32, size: u32, total_size: u32);
@@ -642,20 +623,22 @@ async fn download_many(
     concurrent_count: usize,
     entries: Vec<Entry>,
 ) -> BatchResult {
-
     // Make it constant and sharable between all tasks.
     let entries = Arc::new(entries);
 
-    // Collect the index of each pending entry, we also keep the expected size for 
+    // Collect the index of each pending entry, we also keep the expected size for
     // sorting and total size. We do this to avoid loosing the original entries order.
     let mut indices = (0..entries.len()).collect::<Vec<_>>();
 
     // Sort our entries in order to download big files first, this is allowing better
     // parallelization at start and avoid too much blocking at the end. Because our
     // indices vector will pop the first index from the end, we put big files at the
-    // end, and so sort by ascending size. We also put 
+    // end, and so sort by ascending size. We also put
     indices.sort_by(|&a_index, &b_index| {
-        match (entries[a_index].expected_size, entries[b_index].expected_size) {
+        match (
+            entries[a_index].expected_size,
+            entries[b_index].expected_size,
+        ) {
             (Some(a), Some(b)) => Ord::cmp(&a, &b),
             (Some(_), None) => Ordering::Less,
             (None, Some(_)) => Ordering::Greater,
@@ -665,7 +648,8 @@ async fn download_many(
 
     // Current downloaded size and total size.
     let mut size = 0;
-    let total_size = indices.iter()
+    let total_size = indices
+        .iter()
         .map(|&index| entries[index].expected_size.unwrap_or(0))
         .sum::<u32>();
 
@@ -678,23 +662,20 @@ async fn download_many(
     let mut completed = 0;
     let mut futures = JoinSet::new();
 
-    let (
-        progress_tx, 
-        mut progress_rx,
-    ) = mpsc::channel(concurrent_count * 2);
+    let (progress_tx, mut progress_rx) = mpsc::channel(concurrent_count * 2);
 
     let mut results = (0..entries.len()).map(|_| None).collect::<Vec<_>>();
 
     // If we have theoretically completed all downloads, we still wait for joining all
     // remaining futures in the join set.
     while completed < entries.len() || !futures.is_empty() {
-        
         while futures.len() < concurrent_count && !indices.is_empty() {
             futures.spawn(download_many_entry(
-                client.clone(), 
+                client.clone(),
                 Arc::clone(&entries),
-                indices.pop().unwrap(),  // Safe because not empty.
-                progress_tx.clone()));
+                indices.pop().unwrap(), // Safe because not empty.
+                progress_tx.clone(),
+            ));
         }
 
         let mut force_progress = false;
@@ -711,22 +692,21 @@ async fn download_many(
                 size += progress as u32;
             }
             else => {
-                // Just ignore, because it's invalid state, in case of join_next we 
+                // Just ignore, because it's invalid state, in case of join_next we
                 // ignore if JoinSet is empty because we rely mostly 'completed'.
                 // For the queue receive, we know that the other end will never be fully
                 // closed because we locally own both 'tx' and 'rx'.
                 continue;
             }
         };
-        
+
         if force_progress || size - last_size >= progress_size_interval {
             handler.on_progress(completed as u32, entries.len() as u32, size, total_size);
             last_size = size;
         }
-
     }
 
-    // Ensure that all tasks are aborted, this allows us to take back ownership of the 
+    // Ensure that all tasks are aborted, this allows us to take back ownership of the
     // underlying vector of entries.
     assert!(futures.is_empty());
 
@@ -741,8 +721,14 @@ async fn download_many(
             ret_errors.push(ret_entries.len());
         }
         ret_entries.push(match res {
-            Ok(inner) => Ok(EntrySuccess { core: entry.core, inner }),
-            Err(kind) => Err(EntryError { core: entry.core, kind }),
+            Ok(inner) => Ok(EntrySuccess {
+                core: entry.core,
+                inner,
+            }),
+            Err(kind) => Err(EntryError {
+                core: entry.core,
+                kind,
+            }),
         });
     }
 
@@ -750,24 +736,24 @@ async fn download_many(
         entries: ret_entries.into_boxed_slice(),
         errors: ret_errors.into_boxed_slice(),
     }
-
 }
 
 /// Download entrypoint for a download, this is a wrapper around core download
 /// function in order to easily catch the result and send it as an event.
 async fn download_many_entry(
-    client: Client, 
+    client: Client,
     entries: Arc<Vec<Entry>>,
     index: usize,
     progress_sender: mpsc::Sender<u32>,
 ) -> (usize, Result<EntrySuccessInner, EntryErrorKind>) {
-
     let progress_sender = ChannelEntryProgressSender {
         sender: progress_sender,
     };
 
-    (index, download_entry(client, &entries[index], progress_sender).await)
-
+    (
+        index,
+        download_entry(client, &entries[index], progress_sender).await,
+    )
 }
 
 async fn download_single(
@@ -775,7 +761,6 @@ async fn download_single(
     handler: &mut dyn Handler,
     entry: &Entry,
 ) -> Result<EntrySuccess, EntryError> {
-
     let mut size = 0u32;
     let total_size = entry.expected_size.unwrap_or(0);
 
@@ -792,31 +777,36 @@ async fn download_single(
     handler.on_progress(1, 1, size, total_size);
 
     match res {
-        Ok(inner) => Ok(EntrySuccess { core: entry.core.clone(), inner }),
-        Err(kind) => Err(EntryError { core: entry.core.clone(), kind }),
+        Ok(inner) => Ok(EntrySuccess {
+            core: entry.core.clone(),
+            inner,
+        }),
+        Err(kind) => Err(EntryError {
+            core: entry.core.clone(),
+            kind,
+        }),
     }
-
 }
 
 /// Internal function to download a single download entry, returning a result with an
 /// optional handle to the std file, if keep open parameter is enabled on the entry.
 async fn download_entry(
-    client: Client, 
+    client: Client,
     entry: &Entry,
     mut progress_sender: impl EntryProgressSender,
 ) -> Result<EntrySuccessInner, EntryErrorKind> {
-
     let mut req = client.get(&*entry.core.url);
-    
+
     // If we are in cache mode, then we derive the file name.
-    let cache_file = entry.use_cache.then(|| {
-        entry.core.file.to_path_buf().appended(".cache")
-    });
+    let cache_file = entry
+        .use_cache
+        .then(|| entry.core.file.to_path_buf().appended(".cache"));
 
     // If we are in cache mode, try checking the file, if the file is locally valid.
     let mut cache = None;
     if let Some(cache_file) = cache_file.as_deref() {
-        cache = check_download_cache(&entry.core.file, cache_file).await
+        cache = check_download_cache(&entry.core.file, cache_file)
+            .await
             .map_err(EntryErrorKind::new_io)?;
     }
 
@@ -836,8 +826,8 @@ async fn download_entry(
         Err(e) if cache.is_some() && (e.is_timeout() || e.is_request() || e.is_connect()) => {
             // Using cache in case of network error.
             let (handle, cache_meta) = cache.unwrap();
-            return Ok(EntrySuccessInner { 
-                size: cache_meta.size, 
+            return Ok(EntrySuccessInner {
+                size: cache_meta.size,
                 sha1: cache_meta.sha1.0,
                 handle: entry.keep_open.then_some(handle),
             });
@@ -852,8 +842,8 @@ async fn download_entry(
     // file as-is, with the handle if keep open is requested.
     if res.status() == StatusCode::NOT_MODIFIED && cache.is_some() {
         let (handle, cache_meta) = cache.unwrap();
-        return Ok(EntrySuccessInner { 
-            size: cache_meta.size, 
+        return Ok(EntrySuccessInner {
+            size: cache_meta.size,
             sha1: cache_meta.sha1.0,
             handle: entry.keep_open.then_some(handle),
         });
@@ -861,12 +851,14 @@ async fn download_entry(
         return Err(EntryErrorKind::InvalidStatus(res.status().as_u16()));
     }
 
-    // Close the possible cached file because we'll need to create it just below. 
+    // Close the possible cached file because we'll need to create it just below.
     drop(cache);
 
     // Create any parent directory so that we can create the file.
     if let Some(parent_dir) = entry.core.file.parent() {
-        fs::create_dir_all(parent_dir).await.map_err(EntryErrorKind::new_io)?;
+        fs::create_dir_all(parent_dir)
+            .await
+            .map_err(EntryErrorKind::new_io)?;
     }
 
     // Only add read capability if the handle needs to be kept.
@@ -875,31 +867,34 @@ async fn download_entry(
         .create(true)
         .truncate(true)
         .read(entry.keep_open)
-        .open(&*entry.core.file).await
+        .open(&*entry.core.file)
+        .await
         .map_err(EntryErrorKind::new_io)?;
-    
+
     // Now we do all the allowed tries at downloading the file.
     let mut try_num = 0u8;
     let (size, sha1) = 'success: loop {
-
         let mut size = 0usize;
         let mut sha1 = Sha1::new();
 
         // On success we break the 'outer loop, on error we break the inner loop!
         // We specify if this error should be retried.
         let (retry, mut err) = loop {
-
             // Read chunk by chunk, any error break the loop and fallthrough, retrying if
             // this is timeout or decode error.
             let chunk = match res.chunk().await {
                 Ok(chunk) => chunk,
-                Err(e) => break (e.is_timeout() || e.is_decode(), EntryErrorKind::new_reqwest(e)),
+                Err(e) => {
+                    break (
+                        e.is_timeout() || e.is_decode(),
+                        EntryErrorKind::new_reqwest(e),
+                    );
+                }
             };
 
             // If chunk is none, it means that we finished reading, the file is complete
             // and so we check size and sha-1, on mismatch we don't retry!
             let Some(chunk) = chunk else {
-
                 let Ok(size) = u32::try_from(size) else {
                     break (false, EntryErrorKind::InvalidSize);
                 };
@@ -919,7 +914,6 @@ async fn download_entry(
                 }
 
                 break 'success (size, sha1);
-
             };
 
             // Adding the size delta and transmit it to the progress handler.
@@ -938,30 +932,31 @@ async fn download_entry(
             }
 
             progress_sender.send(delta as u32).await;
-
         };
 
         // We have not reached the max retry, so we try to rewind the file and re-request
         // the resource, if not possible, we flow below to delete the file and return the
         // error!
         if retry && try_num < entry.max_retry {
-            
             try_num += 1;
-            
+
             // Scope the error in this closure...
             let rewind_res = async || -> Result<(), EntryErrorKind> {
-                
                 file.rewind().await.map_err(EntryErrorKind::new_io)?;
                 file.set_len(0).await.map_err(EntryErrorKind::new_io)?;
-                
-                res = client.get(&*entry.core.url).send().await.map_err(EntryErrorKind::new_reqwest)?;
+
+                res = client
+                    .get(&*entry.core.url)
+                    .send()
+                    .await
+                    .map_err(EntryErrorKind::new_reqwest)?;
                 if res.status() != StatusCode::OK {
                     return Err(EntryErrorKind::InvalidStatus(res.status().as_u16()));
                 }
 
                 Ok(())
-
-            }().await;
+            }()
+            .await;
 
             // If no error, retry, if error just fallthrough to the cleanup code below!
             match rewind_res {
@@ -971,15 +966,14 @@ async fn download_entry(
                     // Fallthrough to cleanup code below...
                 }
             }
-
         }
-        
+
         // Drop the file handle so that we can remove the file just after! We
-        // flush it in order to ensure that when dropping it, all operation 
+        // flush it in order to ensure that when dropping it, all operation
         // are completed.
         let _ = file.flush().await;
         drop(file);
-        
+
         // Remove the file, because we are not guaranteed that it's complete.
         // Ignore the error in case it fails, we just want to return the original error.
         let _ = fs::remove_file(&*entry.core.file).await;
@@ -988,41 +982,45 @@ async fn download_entry(
         if let Some(cache_file) = cache_file.as_deref() {
             let _ = fs::remove_file(cache_file).await;
         }
-        
-        return Err(err);
 
+        return Err(err);
     };
 
     // If we have a cache file, write it.
     if let Some(cache_file) = cache_file.as_deref() {
-
-        let etag = res.headers().get(header::ETAG)
+        let etag = res
+            .headers()
+            .get(header::ETAG)
             .and_then(|h| h.to_str().ok().map(str::to_string));
 
-        let last_modified = res.headers().get(header::LAST_MODIFIED)
+        let last_modified = res
+            .headers()
+            .get(header::LAST_MODIFIED)
             .and_then(|h| h.to_str().ok().map(str::to_string));
 
         // Only write the cache file if relevant!
         if etag.is_some() || last_modified.is_some() {
-
-            let cache_meta_writer = File::create(cache_file).await.map_err(EntryErrorKind::new_io)?;
+            let cache_meta_writer = File::create(cache_file)
+                .await
+                .map_err(EntryErrorKind::new_io)?;
             let cache_meta_writer = BufWriter::new(cache_meta_writer.into_std().await);
 
-            let res = serde_json::to_writer(cache_meta_writer, &serde::CacheMeta {
-                url: entry.core.url.to_string(),
-                size,
-                sha1: crate::serde::HexString(sha1.into()),
-                etag,
-                last_modified,
-            });
+            let res = serde_json::to_writer(
+                cache_meta_writer,
+                &serde::CacheMeta {
+                    url: entry.core.url.to_string(),
+                    size,
+                    sha1: crate::serde::HexString(sha1.into()),
+                    etag,
+                    last_modified,
+                },
+            );
 
             // Silently ignore errors by we remove the file if it happens.
             if res.is_err() {
                 let _ = fs::remove_file(cache_file).await;
             }
-
         }
-
     }
 
     file.flush().await.map_err(EntryErrorKind::new_io)?;
@@ -1042,17 +1040,18 @@ async fn download_entry(
         sha1: sha1.into(),
         handle,
     })
-
 }
 
-/// Given a file and its cache file, return the cache metadata only if the file is 
-/// existing and the file has not been modified (size and SHA-1). 
-/// 
-/// The opened file handle is also returned with the metadata, this avoids running into 
+/// Given a file and its cache file, return the cache metadata only if the file is
+/// existing and the file has not been modified (size and SHA-1).
+///
+/// The opened file handle is also returned with the metadata, this avoids running into
 /// race conditions by closing and reopening the file. The returned file handle is
 /// writeable and its position is set to 0.
-async fn check_download_cache(file: &Path, cache_file: &Path) -> io::Result<Option<(std::fs::File, serde::CacheMeta)>> {
-
+async fn check_download_cache(
+    file: &Path,
+    cache_file: &Path,
+) -> io::Result<Option<(std::fs::File, serde::CacheMeta)>> {
     // Start by reading the cache metadata associated to this file.
     let cache = match File::open(cache_file).await {
         Ok(file) => serde_json::from_reader::<_, serde::CacheMeta>(file.into_std().await).ok(),
@@ -1090,12 +1089,11 @@ async fn check_download_cache(file: &Path, cache_file: &Path) -> io::Result<Opti
     reader.rewind()?;
 
     Ok(Some((reader, cache)))
-
 }
 
-/// Internal abstract progress sender that support sending the progress into either a 
+/// Internal abstract progress sender that support sending the progress into either a
 /// channel or directly to a handler.
-/// 
+///
 /// NOTE: We tried to make this trait into an enum dispatch instead, but it cause issues
 /// because the enum can't directly hold a `&mut dyn Handler` because it's not [`Send`],
 /// therefore we needed to make the handler dynamic and when using the 'Channel' variant
@@ -1143,12 +1141,11 @@ mod serde {
         pub url: String,
         /// Size of the cached file, used to verify its validity.
         pub size: u32,
-        /// SHA-1 hash of the cached file, used to verify its validity. 
+        /// SHA-1 hash of the cached file, used to verify its validity.
         pub sha1: HexString<20>,
         /// The ETag if present.
         pub etag: Option<String>,
         /// Last modified data if present.
         pub last_modified: Option<String>,
     }
-
 }
