@@ -1,4 +1,4 @@
-//! Extension to the Mojang installer to support fetching and installation of 
+//! Extension to the Mojang installer to support fetching and installation of
 //! Fabric-related mod loader versions.
 
 mod serde;
@@ -7,12 +7,11 @@ use std::path::Path;
 
 use reqwest::StatusCode;
 
-use crate::moj::{self, HandlerInto as _};
 use crate::base::{self, Game};
 use crate::download;
+use crate::moj::{self, HandlerInto as _};
 
-
-/// An installer for supporting mod loaders that are Fabric or like it (Quilt, 
+/// An installer for supporting mod loaders that are Fabric or like it (Quilt,
 /// LegacyFabric, Babric). The generic parameter is used to specify the API to use.
 #[derive(Debug, Clone)]
 pub struct Installer {
@@ -24,9 +23,12 @@ pub struct Installer {
 }
 
 impl Installer {
-
     /// Create a new installer with default configuration.
-    pub fn new(loader: Loader, game_version: impl Into<GameVersion>, loader_version: impl Into<LoaderVersion>) -> Self {
+    pub fn new(
+        loader: Loader,
+        game_version: impl Into<GameVersion>,
+        loader_version: impl Into<LoaderVersion>,
+    ) -> Self {
         Self {
             mojang: moj::Installer::new(String::new()),
             loader,
@@ -47,8 +49,8 @@ impl Installer {
     }
 
     /// Get the underlying mojang installer through mutable reference.
-    /// 
-    /// *Note that the `version` and `fetch` properties will be overwritten when 
+    ///
+    /// *Note that the `version` and `fetch` properties will be overwritten when
     /// installing.*
     #[inline]
     pub fn mojang_mut(&mut self) -> &mut moj::Installer {
@@ -100,7 +102,6 @@ impl Installer {
 
     #[inline(never)]
     fn install_dyn(&mut self, handler: &mut dyn Handler) -> Result<Game> {
-
         let Self {
             ref mut mojang,
             loader,
@@ -111,39 +112,37 @@ impl Installer {
         let api = Api::new(loader);
 
         let game_version = match game_version {
-            GameVersion::Stable |
-            GameVersion::Unstable => {
-
+            GameVersion::Stable | GameVersion::Unstable => {
                 let stable = matches!(game_version, GameVersion::Stable);
                 let versions = api.request_game_versions()?;
 
                 match versions.find_latest(stable) {
                     Some(v) => v.name().to_string(),
-                    None => return Err(Error::LatestVersionNotFound { 
-                        game_version: None, 
-                        stable,
-                    }),
+                    None => {
+                        return Err(Error::LatestVersionNotFound {
+                            game_version: None,
+                            stable,
+                        });
+                    }
                 }
-
             }
             GameVersion::Name(name) => name.clone(),
         };
 
         let loader_version = match loader_version {
-            LoaderVersion::Stable |
-            LoaderVersion::Unstable => {
-                
+            LoaderVersion::Stable | LoaderVersion::Unstable => {
                 let stable = matches!(loader_version, LoaderVersion::Stable);
                 let versions = api.request_loader_versions(Some(&game_version))?;
-                
+
                 match versions.find_latest(stable) {
                     Some(v) => v.name().to_string(),
-                    None => return Err(Error::LatestVersionNotFound { 
-                        game_version: Some(game_version), 
-                        stable,
-                    }),
+                    None => {
+                        return Err(Error::LatestVersionNotFound {
+                            game_version: Some(game_version),
+                            stable,
+                        });
+                    }
                 }
-
             }
             LoaderVersion::Name(name) => name.clone(),
         };
@@ -153,13 +152,12 @@ impl Installer {
         let prefix = loader.default_prefix();
         let root_version = format!("{prefix}-{game_version}-{loader_version}");
         mojang.set_version(root_version.clone());
-        
+
         // NOTE: We don't need to fetch exclude that version because the handler below
         // already take care of that! 'mojang.add_fetch_exclude(...)'
 
         // Scoping the temporary internal handler.
         let game = {
-
             let mut handler = InternalHandler {
                 inner: &mut *handler,
                 error: Ok(()),
@@ -168,18 +166,15 @@ impl Installer {
                 game_version: &game_version,
                 loader_version: &loader_version,
             };
-    
+
             // Same as above, we are giving a &mut dyn ref to avoid huge monomorphization.
             let res = mojang.install(&mut handler);
             handler.error?;
             res?
-
         };
-        
+
         Ok(game)
-
     }
-
 }
 
 /// Events happening when installing.
@@ -188,8 +183,14 @@ impl Installer {
 pub enum Event<'a> {
     /// Forwarding a mojang event.
     Mojang(moj::Event<'a>),
-    FetchVersion { game_version: &'a str, loader_version: &'a str },
-    FetchedVersion { game_version: &'a str, loader_version: &'a str },
+    FetchVersion {
+        game_version: &'a str,
+        loader_version: &'a str,
+    },
+    FetchedVersion {
+        game_version: &'a str,
+        loader_version: &'a str,
+    },
 }
 
 /// A handle for watching an installation.
@@ -215,7 +216,6 @@ impl Handler for () {
 /// Internal adapter trait for using it like other handlers.
 #[allow(unused)]
 pub(crate) trait HandlerInto: Handler + Sized {
-    
     #[inline]
     fn into_mojang(self) -> impl moj::Handler {
         pub(crate) struct Adapter<H: Handler>(pub H);
@@ -236,7 +236,6 @@ pub(crate) trait HandlerInto: Handler + Sized {
     fn into_download(self) -> impl download::Handler {
         self.into_mojang().into_download()
     }
-
 }
 
 impl<H: Handler> HandlerInto for H {}
@@ -259,10 +258,8 @@ pub enum Error {
     /// The given game version as requested to launch Fabric with is not supported by the
     /// selected API.
     #[error("game version not found: {game_version}")]
-    GameVersionNotFound {
-        game_version: String,
-    },
-    /// The given loader version as requested to launch Fabric with is not supported by 
+    GameVersionNotFound { game_version: String },
+    /// The given loader version as requested to launch Fabric with is not supported by
     /// the selected API for the requested game version (which is supported).
     #[error("loader version not found: {game_version}/{loader_version}")]
     LoaderVersionNotFound {
@@ -290,13 +287,12 @@ pub enum Loader {
     /// This is the API for the LegacyFabric project which aims to backport the Fabric loader
     /// to older versions, up to 1.14 snapshots.
     LegacyFabric,
-    /// This is the API for the Babric project, which aims to support the Fabric loader 
+    /// This is the API for the Babric project, which aims to support the Fabric loader
     /// for Minecraft beta 1.7.3 in particular.
     Babric,
 }
 
 impl Loader {
-
     fn default_prefix(self) -> &'static str {
         match self {
             Loader::Fabric => "fabric",
@@ -305,7 +301,6 @@ impl Loader {
             Loader::Babric => "babric",
         }
     }
-
 }
 
 /// Specify the fabric game version to start the loader version.
@@ -316,7 +311,7 @@ pub enum GameVersion {
     Stable,
     /// Use the latest unstable game version, this is usually equivalent to the 'Snapshot'
     /// version with Mojang, but is up to each fabric-like API to decide.
-    /// 
+    ///
     /// Note that if the most recent version is stable, it will also be selected as the
     /// most recent unstable one, much like Mojang, when a stable release is just
     /// published, it is also the latest snapshot (usually not for a long time).
@@ -337,7 +332,7 @@ impl<T: Into<String>> From<T> for GameVersion {
 pub enum LoaderVersion {
     /// Use the latest stable loader version for the root version.
     Stable,
-    /// Use the latest unstable loader version for the root version, see 
+    /// Use the latest unstable loader version for the root version, see
     /// [`GameVersion::Unstable`] for more explanation, the two are the same.
     Unstable,
     /// Use the specific version.
@@ -356,7 +351,7 @@ impl<T: Into<String>> From<T> for LoaderVersion {
 #[derive(Debug)]
 pub struct Api {
     /// Base URL for that API, not ending with a '/'. This API must support the following
-    /// endpoints supporting the same API as official Fabric API: 
+    /// endpoints supporting the same API as official Fabric API:
     /// - `/versions/game`
     /// - `/versions/loader`
     /// - `/versions/loader/<game_version>`
@@ -366,8 +361,7 @@ pub struct Api {
 }
 
 impl Api {
-
-    /// Initialize the handle to 
+    /// Initialize the handle to
     pub fn new(loader: Loader) -> Self {
         Self {
             base_url: match loader {
@@ -375,16 +369,17 @@ impl Api {
                 Loader::Quilt => "https://meta.quiltmc.org/v3",
                 Loader::LegacyFabric => "https://meta.legacyfabric.net/v2",
                 Loader::Babric => "https://meta.babric.glass-launcher.net/v2",
-            }
+            },
         }
     }
 
     /// Request supported game versions.
     pub fn request_game_versions(&self) -> Result<ApiGameVersions<'_>> {
-        self.raw_request_game_versions().map(|versions| ApiGameVersions {
-            _api: self,
-            versions,
-        })
+        self.raw_request_game_versions()
+            .map(|versions| ApiGameVersions {
+                _api: self,
+                versions,
+            })
     }
 
     fn raw_request_game_versions(&self) -> Result<Vec<serde::Game>> {
@@ -392,26 +387,32 @@ impl Api {
             crate::http::client()?
                 .get(format!("{}/versions/game", self.base_url))
                 .header(reqwest::header::ACCEPT, "application/json")
-                .send().await?
+                .send()
+                .await?
                 .error_for_status()?
-                .json::<Vec<serde::Game>>().await
-        }).map_err(|e| {
-            Error::from(base::Error::new_reqwest(e, "request all game versions"))
+                .json::<Vec<serde::Game>>()
+                .await
         })
+        .map_err(|e| Error::from(base::Error::new_reqwest(e, "request all game versions")))
     }
 
     /// Request supported loader versions.
-    pub fn request_loader_versions(&self, game_version: Option<&str>) -> Result<ApiLoaderVersions<'_>> {
+    pub fn request_loader_versions(
+        &self,
+        game_version: Option<&str>,
+    ) -> Result<ApiLoaderVersions<'_>> {
         if let Some(game_version) = game_version {
-            self.raw_request_game_loader_versions(game_version).map(|versions| ApiLoaderVersions {
-                _api: self,
-                versions: versions.into_iter().map(|v| v.loader).collect(),
-            })
+            self.raw_request_game_loader_versions(game_version)
+                .map(|versions| ApiLoaderVersions {
+                    _api: self,
+                    versions: versions.into_iter().map(|v| v.loader).collect(),
+                })
         } else {
-            self.raw_request_loader_versions().map(|versions| ApiLoaderVersions {
-                _api: self,
-                versions,
-            })
+            self.raw_request_loader_versions()
+                .map(|versions| ApiLoaderVersions {
+                    _api: self,
+                    versions,
+                })
         }
     }
 
@@ -420,81 +421,108 @@ impl Api {
             crate::http::client()?
                 .get(format!("{}/versions/loader", self.base_url))
                 .header(reqwest::header::ACCEPT, "application/json")
-                .send().await?
+                .send()
+                .await?
                 .error_for_status()?
-                .json::<Vec<serde::Loader>>().await
-        }).map_err(|e| {
-            Error::from(base::Error::new_reqwest(e, "request all loader versions"))
+                .json::<Vec<serde::Loader>>()
+                .await
         })
+        .map_err(|e| Error::from(base::Error::new_reqwest(e, "request all loader versions")))
     }
 
     /// Request supported loader versions for the given game version.
-    fn raw_request_game_loader_versions(&self, game_version: &str) -> Result<Vec<serde::GameLoader>> {
-        
+    fn raw_request_game_loader_versions(
+        &self,
+        game_version: &str,
+    ) -> Result<Vec<serde::GameLoader>> {
         let ret = crate::tokio::sync(async move {
             crate::http::client()?
                 .get(format!("{}/versions/loader/{game_version}", self.base_url))
                 .header(reqwest::header::ACCEPT, "application/json")
-                .send().await?
+                .send()
+                .await?
                 .error_for_status()?
-                .json::<Vec<serde::GameLoader>>().await
+                .json::<Vec<serde::GameLoader>>()
+                .await
         });
 
-        if let Err(e) = &ret && let Some(StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST) = e.status() {
+        if let Err(e) = &ret
+            && let Some(StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST) = e.status()
+        {
             return Ok(Vec::new());
         }
-        
-        ret.map_err(|e| {
-            Error::from(base::Error::new_reqwest(e, format!("request loader versions for game {}", game_version)))
-        })
 
+        ret.map_err(|e| {
+            Error::from(base::Error::new_reqwest(
+                e,
+                format!("request loader versions for game {}", game_version),
+            ))
+        })
     }
 
     /// Return true if the given game version has any loader versions supported.
     fn raw_request_has_game_loader_versions(&self, game_version: &str) -> Result<bool> {
-        
         let ret = crate::tokio::sync(async move {
             crate::http::client()?
                 .get(format!("{}/versions/loader/{game_version}", self.base_url))
                 .header(reqwest::header::ACCEPT, "application/json")
-                .send().await?
+                .send()
+                .await?
                 .error_for_status()?
-                .bytes().await
+                .bytes()
+                .await
                 .map(|bytes| &*bytes != b"[]") // This avoids parsing JSON
         });
 
-        if let Err(e) = &ret && let Some(StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST) = e.status() {
+        if let Err(e) = &ret
+            && let Some(StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST) = e.status()
+        {
             return Ok(false);
         }
 
         ret.map_err(|e| {
-            Error::from(base::Error::new_reqwest(e, format!("request if there are loader versions for game {game_version}")))
+            Error::from(base::Error::new_reqwest(
+                e,
+                format!("request if there are loader versions for game {game_version}"),
+            ))
         })
-
     }
 
     /// Request the prebuilt version metadata for the given game and loader versions.
-    fn raw_request_game_loader_version_metadata(&self, game_version: &str, loader_version: &str) -> Result<Option<base::serde::VersionMetadata>> {
-        
+    fn raw_request_game_loader_version_metadata(
+        &self,
+        game_version: &str,
+        loader_version: &str,
+    ) -> Result<Option<base::serde::VersionMetadata>> {
         let ret = crate::tokio::sync(async move {
             crate::http::client()?
-                .get(format!("{}/versions/loader/{game_version}/{loader_version}/profile/json", self.base_url))
+                .get(format!(
+                    "{}/versions/loader/{game_version}/{loader_version}/profile/json",
+                    self.base_url
+                ))
                 .header(reqwest::header::ACCEPT, "application/json")
-                .send().await?
+                .send()
+                .await?
                 .error_for_status()?
-                .json::<base::serde::VersionMetadata>().await
+                .json::<base::serde::VersionMetadata>()
+                .await
         });
 
-        if let Err(e) = &ret && let Some(StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST) = e.status() {
+        if let Err(e) = &ret
+            && let Some(StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST) = e.status()
+        {
             return Ok(None);
         }
 
         ret.map(Some).map_err(|e| {
-            Error::from(base::Error::new_reqwest(e, format!("request version metadata for game {game_version} and loader {loader_version}")))
+            Error::from(base::Error::new_reqwest(
+                e,
+                format!(
+                    "request version metadata for game {game_version} and loader {loader_version}"
+                ),
+            ))
         })
-
     }
-
 }
 
 #[derive(Debug)]
@@ -504,7 +532,6 @@ pub struct ApiGameVersions<'a> {
 }
 
 impl ApiGameVersions<'_> {
-
     /// Create an iterator over all game versions.
     pub fn iter(&self) -> impl Iterator<Item = ApiGameVersion<'_>> + use<'_> {
         self.versions.iter().map(|inner| ApiGameVersion { inner })
@@ -514,7 +541,6 @@ impl ApiGameVersions<'_> {
     pub fn find_latest(&self, stable: bool) -> Option<ApiGameVersion<'_>> {
         self.iter().find(|v| !stable || v.is_stable())
     }
-
 }
 
 #[derive(Debug)]
@@ -523,7 +549,6 @@ pub struct ApiGameVersion<'d> {
 }
 
 impl<'d> ApiGameVersion<'d> {
-
     #[inline]
     pub fn name(&self) -> &'d str {
         &self.inner.version
@@ -533,7 +558,6 @@ impl<'d> ApiGameVersion<'d> {
     pub fn is_stable(&self) -> bool {
         self.inner.stable
     }
-
 }
 
 #[derive(Debug)]
@@ -543,7 +567,6 @@ pub struct ApiLoaderVersions<'a> {
 }
 
 impl ApiLoaderVersions<'_> {
-
     /// Create an iterator over all loader versions.
     pub fn iter(&self) -> impl Iterator<Item = ApiLoaderVersion<'_>> + use<'_> {
         self.versions.iter().map(|inner| ApiLoaderVersion { inner })
@@ -553,7 +576,6 @@ impl ApiLoaderVersions<'_> {
     pub fn find_latest(&self, stable: bool) -> Option<ApiLoaderVersion<'_>> {
         self.iter().find(|v| !stable || v.is_stable())
     }
-
 }
 
 #[derive(Debug)]
@@ -562,7 +584,6 @@ pub struct ApiLoaderVersion<'d> {
 }
 
 impl<'d> ApiLoaderVersion<'d> {
-
     #[inline]
     pub fn name(&self) -> &'d str {
         &self.inner.version
@@ -574,7 +595,6 @@ impl<'d> ApiLoaderVersion<'d> {
             !self.inner.version.contains("-beta") && !self.inner.version.contains("-pre")
         })
     }
-
 }
 
 // ========================== //
@@ -587,7 +607,7 @@ struct InternalHandler<'a> {
     inner: &'a mut dyn Handler,
     /// If there is an error in the handler.
     error: Result<()>,
-    /// The real version is, as defined 
+    /// The real version is, as defined
     api: Api,
     root_version: &'a str,
     game_version: &'a str,
@@ -595,25 +615,21 @@ struct InternalHandler<'a> {
 }
 
 impl moj::Handler for InternalHandler<'_> {
-
     fn on_event(&mut self, mut event: moj::Event) {
-
         let ret = match event {
-            moj::Event::Base(base::Event::NeedVersion { 
-                version, 
-                file, 
-                ref mut retry, 
-            }) => {
-                match self.inner_need_version(version, file) {
-                    Ok(true) => {
-                        **retry = true;
-                        Ok(())
-                    }
-                    Ok(false) => Ok(()),
-                    Err(e) => Err(e),
+            moj::Event::Base(base::Event::NeedVersion {
+                version,
+                file,
+                ref mut retry,
+            }) => match self.inner_need_version(version, file) {
+                Ok(true) => {
+                    **retry = true;
+                    Ok(())
                 }
-            }
-            _ => Ok(())
+                Ok(false) => Ok(()),
+                Err(e) => Err(e),
+            },
+            _ => Ok(()),
         };
 
         if let Err(e) = ret {
@@ -622,21 +638,17 @@ impl moj::Handler for InternalHandler<'_> {
         }
 
         self.inner.on_event(Event::Mojang(event));
-
     }
-
 }
 
 impl InternalHandler<'_> {
-
     fn inner_need_version(&mut self, version: &str, file: &Path) -> Result<bool> {
-
         if version != self.root_version {
             return Ok(false);
         }
 
-        self.inner.on_event(Event::FetchVersion { 
-            game_version: self.game_version, 
+        self.inner.on_event(Event::FetchVersion {
+            game_version: self.game_version,
             loader_version: self.loader_version,
         });
 
@@ -645,16 +657,22 @@ impl InternalHandler<'_> {
         // version if he will. But now that we need to request the prebuilt
         // version metadata, in case of error we'll try to understand what's the
         // issue: unknown game version or unknown loader version?
-        let mut metadata = match self.api.raw_request_game_loader_version_metadata(self.game_version, self.loader_version)? {
+        let mut metadata = match self
+            .api
+            .raw_request_game_loader_version_metadata(self.game_version, self.loader_version)?
+        {
             Some(metadata) => metadata,
             None => {
-                if self.api.raw_request_has_game_loader_versions(self.game_version)? {
-                    return Err(Error::LoaderVersionNotFound { 
+                if self
+                    .api
+                    .raw_request_has_game_loader_versions(self.game_version)?
+                {
+                    return Err(Error::LoaderVersionNotFound {
                         game_version: self.game_version.to_string(),
                         loader_version: self.loader_version.to_string(),
                     });
                 } else {
-                    return Err(Error::GameVersionNotFound { 
+                    return Err(Error::GameVersionNotFound {
                         game_version: self.game_version.to_string(),
                     });
                 }
@@ -665,13 +683,11 @@ impl InternalHandler<'_> {
         metadata.id = version.to_string();
         base::write_version_metadata(file, &metadata)?;
 
-        self.inner.on_event(Event::FetchedVersion { 
-            game_version: self.game_version, 
+        self.inner.on_event(Event::FetchedVersion {
+            game_version: self.game_version,
             loader_version: self.loader_version,
         });
 
         Ok(true)
-
     }
-    
 }

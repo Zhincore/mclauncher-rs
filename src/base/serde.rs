@@ -1,5 +1,5 @@
 //! JSON schemas structures for serde deserialization.
-//! 
+//!
 //! This module is internal to the crate and should not be exposed because the format
 //! might change with increasing version and bug fixes.
 
@@ -9,9 +9,8 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, FixedOffset};
 
-use crate::serde::{HexString, RegexString};
 use crate::maven::Gav;
-
+use crate::serde::{HexString, RegexString};
 
 // ================== //
 //  VERSION METADATA  //
@@ -51,7 +50,7 @@ pub struct VersionMetadata {
     /// Unknown, used by official launcher.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compliance_level: Option<u32>,
-    /// A mapping of downloads for entry point JAR files, such as for client or for 
+    /// A mapping of downloads for entry point JAR files, such as for client or for
     /// server. This sometime also defines a server executable for old versions.
     #[serde(default)]
     #[serde(skip_serializing_if = "HashMap::is_empty")]
@@ -89,7 +88,6 @@ pub enum VersionType {
 }
 
 impl VersionType {
-
     pub fn as_str(&self) -> &'static str {
         match self {
             VersionType::Release => "release",
@@ -98,7 +96,6 @@ impl VersionType {
             VersionType::OldAlpha => "old_alpha",
         }
     }
-
 }
 
 /// Object describing the Mojang-provided Java version to use to launch the game.
@@ -206,7 +203,6 @@ pub struct VersionLoggingFile {
     #[serde(flatten)]
     pub download: Download,
 }
-
 
 // ================== //
 //    ASSET INDEX     //
@@ -337,35 +333,32 @@ pub struct Download {
 #[serde(untagged)]
 pub enum SingleOrVec<T> {
     Single(T),
-    Vec(Vec<T>)
+    Vec(Vec<T>),
 }
 
-/// Internal serde structure for RFC3339 date time parsing, specifically for 
+/// Internal serde structure for RFC3339 date time parsing, specifically for
 /// [`VersionMetadata`] because it appears that some metadata might contain malformed
-/// date time that we don't want to error. 
-/// 
-/// This as been observed with NeoForge installer embedded version, an example of 
+/// date time that we don't want to error.
+///
+/// This as been observed with NeoForge installer embedded version, an example of
 /// malformed time is "2024-12-09T23:22:49.408008176", where the timezone is missing.
-/// 
+///
 /// On old Forge versions there is also a missing ':' in the timezone offset between
 /// hours and minutes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DateTimeChill(pub DateTime<FixedOffset>);
 
 impl<'de> serde::Deserialize<'de> for DateTimeChill {
-
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        
         use chrono::format::ParseErrorKind;
 
         struct Visitor;
         impl serde::de::Visitor<'_> for Visitor {
-
             type Value = DateTimeChill;
-            
+
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("an RFC 3339 formatted date and time string")
             }
@@ -374,14 +367,13 @@ impl<'de> serde::Deserialize<'de> for DateTimeChill {
             where
                 E: serde::de::Error,
             {
-
                 let err;
                 let mut buf;
 
                 match DateTime::parse_from_rfc3339(v) {
                     Ok(date) => return Ok(DateTimeChill(date)),
                     Err(e) if e.kind() == ParseErrorKind::TooShort => {
-                        // Try adding a 'Z' at the end, we don't know if this was the issue 
+                        // Try adding a 'Z' at the end, we don't know if this was the issue
                         // so we retry.
                         err = e;
                         buf = v.to_string();
@@ -408,24 +400,18 @@ impl<'de> serde::Deserialize<'de> for DateTimeChill {
                     Ok(date) => Ok(DateTimeChill(date)),
                     Err(_) => Err(E::custom(err)), // Return the original error!!
                 }
-
             }
-            
         }
 
         deserializer.deserialize_str(Visitor)
-        
     }
-
 }
 
 impl serde::Serialize for DateTimeChill {
-
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         self.0.serialize(serializer)
     }
-
 }

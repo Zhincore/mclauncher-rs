@@ -1,27 +1,26 @@
-//! Extension to the Mojang installer to support fetching and installation of 
+//! Extension to the Mojang installer to support fetching and installation of
 //! Forge and NeoForge mod loader versions.
 
 mod serde;
 
-use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek};
-use std::process::{Command, Output};
-use std::path::{Path, PathBuf};
 use std::collections::HashMap;
-use std::iter::FusedIterator;
 use std::fmt::Write;
-use std::{env, fs};
 use std::fs::File;
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek};
+use std::iter::FusedIterator;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::{env, fs};
 
-use crate::moj::{self, FetchExclude, HandlerInto as _};
-use crate::download::{self, Batch, EntryErrorKind};
 use crate::base::{self, Game, LIBRARIES_URL};
+use crate::download::{self, Batch, EntryErrorKind};
 use crate::maven::{Gav, MetadataParser};
+use crate::moj::{self, FetchExclude, HandlerInto as _};
 use crate::path::{PathBufExt, PathExt};
 
 use zip::ZipArchive;
 
 use elsa::sync::FrozenMap;
-
 
 /// An installer that supports Forge and NeoForge mod loaders.
 #[derive(Debug, Clone)]
@@ -35,7 +34,6 @@ pub struct Installer {
 }
 
 impl Installer {
-
     /// Create a new installer with default configuration.
     pub fn new(loader: Loader, version: impl Into<Version>) -> Self {
         Self {
@@ -53,8 +51,8 @@ impl Installer {
     }
 
     /// Get the underlying mojang installer through mutable reference.
-    /// 
-    /// *Note that the `version` and `fetch` properties will be overwritten when 
+    ///
+    /// *Note that the `version` and `fetch` properties will be overwritten when
     /// installing.*
     #[inline]
     pub fn mojang_mut(&mut self) -> &mut moj::Installer {
@@ -95,7 +93,6 @@ impl Installer {
 
     #[inline(never)]
     fn install_dyn(&mut self, handler: &mut dyn Handler) -> Result<Game> {
-
         let Self {
             ref mut mojang,
             loader,
@@ -105,15 +102,16 @@ impl Installer {
         // Request the repository if needed!
         let version = match version {
             Version::Name(name) => name.clone(),
-            Version::Stable(game_version) |
-            Version::Unstable(game_version) => {
+            Version::Stable(game_version) | Version::Unstable(game_version) => {
                 let stable = matches!(version, Version::Stable(_));
                 match Repo::request(loader)?.find_latest(&game_version, stable) {
                     Some(v) => v.name().to_string(),
-                    None => return Err(Error::LatestVersionNotFound { 
-                        game_version: game_version.clone(), 
-                        stable,
-                    }),
+                    None => {
+                        return Err(Error::LatestVersionNotFound {
+                            game_version: game_version.clone(),
+                            stable,
+                        });
+                    }
                 }
             }
         };
@@ -122,7 +120,7 @@ impl Installer {
             Loader::Forge => InstallConfig::new_forge(&version),
             Loader::NeoForge => InstallConfig::new_neoforge(&version),
         };
-        
+
         // Shortcut because the version name is invalid and there will be no installer or
         // that installer is not supported.
         let Some(config) = config else {
@@ -133,81 +131,81 @@ impl Installer {
         let prefix = config.default_prefix;
         let root_version = format!("{prefix}-{version}");
 
-        // Adding it to fetch exclude, we don't want to try to fetch it from Mojang's 
+        // Adding it to fetch exclude, we don't want to try to fetch it from Mojang's
         // manifest: it's pointless and it avoids trying to fetch the manifest.
         mojang.add_fetch_exclude(FetchExclude::Exact(root_version.clone()));
 
-        // The goal is to run the installer a first time, check potential errors to 
+        // The goal is to run the installer a first time, check potential errors to
         // know if the error is related to the loader, or not.
         mojang.set_version(root_version.clone());
         let reason = match mojang.install((&mut *handler).into_mojang()) {
             Ok(game) => {
-
                 let Some(check_libraries) = config.check_libraries else {
                     return Ok(game);
                 };
 
                 // Using this outer loop to break when some reason to install is met.
                 loop {
-
                     fn check_exists(file: &Path) -> bool {
                         fs::exists(file).unwrap_or_default()
                     }
 
                     let libs_dir = mojang.base().libraries_dir();
-                    
+
                     // Start by checking patched client and universal client.
-                    if check_libraries.has_loader_client() 
-                    && let Some(client_gav) = config.name.with_classifier(Some("client")) 
-                    && !check_exists(&libs_dir.join(client_gav.file())) {
+                    if check_libraries.has_loader_client()
+                        && let Some(client_gav) = config.name.with_classifier(Some("client"))
+                        && !check_exists(&libs_dir.join(client_gav.file()))
+                    {
                         break InstallReason::MissingPatchedClient;
                     }
 
-                    if check_libraries.has_loader_universal() 
-                    && let Some(universal_gav) = config.name.with_classifier(Some("universal")) 
-                    && !check_exists(&libs_dir.join(universal_gav.file())) {
+                    if check_libraries.has_loader_universal()
+                        && let Some(universal_gav) = config.name.with_classifier(Some("universal"))
+                        && !check_exists(&libs_dir.join(universal_gav.file()))
+                    {
                         break InstallReason::MissingUniversalClient;
                     }
-                    
-                    if check_libraries == InstallConfigCheckLibraries::ForgeV1
-                    || check_libraries == InstallConfigCheckLibraries::ForgeV2 {
 
-                        // We analyze game argument to try find which libraries are 
-                        // absolutely required for the game to run, there has been so 
-                        // many way of launching the game in the Forge/NeoForge history 
-                        // that it's complicated to ensure that we can accurately 
+                    if check_libraries == InstallConfigCheckLibraries::ForgeV1
+                        || check_libraries == InstallConfigCheckLibraries::ForgeV2
+                    {
+                        // We analyze game argument to try find which libraries are
+                        // absolutely required for the game to run, there has been so
+                        // many way of launching the game in the Forge/NeoForge history
+                        // that it's complicated to ensure that we can accurately
                         // determine if the mod loader is properly installed.
                         let mut mcp_version = None;
                         let mut args_iter = game.game_args.iter();
                         while let Some(arg) = args_iter.next() {
                             match arg.as_str() {
-                                "--fml.neoFormVersion" |
-                                "--fml.mcpVersion" => {
-                                    let Some(version) = args_iter.next() else { continue };
+                                "--fml.neoFormVersion" | "--fml.mcpVersion" => {
+                                    let Some(version) = args_iter.next() else {
+                                        continue;
+                                    };
                                     mcp_version = Some(version.as_str());
                                 }
                                 _ => {}
                             }
                         }
 
-                        // If there is a MCP version to check, we go check if client 
+                        // If there is a MCP version to check, we go check if client
                         // extra, slim and srg files are present, or not, they are loaded
                         // dynamically by the mod loader.
                         if let Some(mcp_version) = mcp_version {
-                            
                             let mcp_artifact = libs_dir
                                 .join("net")
                                 .joined("minecraft")
                                 .joined("client")
                                 .joined(&config.game_version)
-                                    .appended("-")
-                                    .appended(mcp_version)
+                                .appended("-")
+                                .appended(mcp_version)
                                 .joined("client")
-                                    .appended("-")
-                                    .appended(&config.game_version)
-                                    .appended("-")
-                                    .appended(mcp_version)
-                                    .appended("-");
+                                .appended("-")
+                                .appended(&config.game_version)
+                                .appended("-")
+                                .appended(mcp_version)
+                                .appended("-");
 
                             if !check_exists(&mcp_artifact.append("srg.jar")) {
                                 break InstallReason::MissingClientSrg;
@@ -218,7 +216,6 @@ impl Installer {
                                     break InstallReason::MissingClientExtra;
                                 }
                             } else {
-
                                 let mc_artifact = libs_dir
                                     .join("net")
                                     .joined("minecraft")
@@ -230,16 +227,13 @@ impl Installer {
                                     .appended("-");
 
                                 if !check_exists(&mc_artifact.append("extra.jar"))
-                                && !check_exists(&mc_artifact.append("extra-stable.jar")) {
+                                    && !check_exists(&mc_artifact.append("extra-stable.jar"))
+                                {
                                     break InstallReason::MissingClientExtra;
                                 }
-
                             }
-
                         }
-                        
                     } else if check_libraries == InstallConfigCheckLibraries::NeoForgeV1 {
-
                         let patched_client_artifact = libs_dir
                             .join("net")
                             .joined("neoforged")
@@ -253,35 +247,39 @@ impl Installer {
                         if !check_exists(&patched_client_artifact) {
                             break InstallReason::MissingPatchedClient;
                         }
-
                     }
 
                     // No reason to reinstall, we return the game as-is.
                     return Ok(game);
-
                 }
-
             }
-            Err(moj::Error::Base(base::Error::VersionNotFound { version })) 
-            if version == root_version => {
+            Err(moj::Error::Base(base::Error::VersionNotFound { version }))
+                if version == root_version =>
+            {
                 InstallReason::MissingVersionMetadata
             }
-            Err(moj::Error::Base(base::Error::LibraryNotFound { name: gav })) 
-            if gav.group() == "net.minecraftforge" && gav.artifact() == "forge" => {
+            Err(moj::Error::Base(base::Error::LibraryNotFound { name: gav }))
+                if gav.group() == "net.minecraftforge" && gav.artifact() == "forge" =>
+            {
                 InstallReason::MissingCoreLibrary
             }
-            Err(e) => return Err(Error::Mojang(e))
+            Err(e) => return Err(Error::Mojang(e)),
         };
 
-        try_install(&mut *handler, &mut *mojang, &config, &root_version, serde::InstallSide::Client, reason)?;
+        try_install(
+            &mut *handler,
+            &mut *mojang,
+            &config,
+            &root_version,
+            serde::InstallSide::Client,
+            reason,
+        )?;
 
         // Retrying launch!
         mojang.set_version(root_version);
         let game = mojang.install((&mut *handler).into_mojang())?;
         Ok(game)
-
     }
-
 }
 
 /// Events happening when installing.
@@ -292,22 +290,28 @@ pub enum Event<'a> {
     Mojang(moj::Event<'a>),
     /// The loader version failed to start, so this installer will (re)try to install
     /// the mod loader.
-    Installing { tmp_dir: &'a Path, reason: InstallReason },
+    Installing {
+        tmp_dir: &'a Path,
+        reason: InstallReason,
+    },
     /// The loader installer will be fetched.
     FetchInstaller { version: &'a str },
     /// The loader installer has been successfully fetched.
-    FetchedInstaller { version: &'a str},
+    FetchedInstaller { version: &'a str },
     /// Notify that the game will be installed manually before running the installer,
     /// because the installer needs it.
     InstallingGame,
-    /// The loader installer libraries will be fetched, either from being download, 
+    /// The loader installer libraries will be fetched, either from being download,
     /// or being extracted from the installer archive.
     FetchInstallerLibraries,
     /// The loader installer libraries has been successfully fetched or extracted.
     FetchedInstallerLibraries,
     /// An installer processor will be run.
-    RunInstallerProcessor { name: &'a Gav, task: Option<&'a str> },
-    /// The mod loader has been apparently successfully installed, it will be run a 
+    RunInstallerProcessor {
+        name: &'a Gav,
+        task: Option<&'a str>,
+    },
+    /// The mod loader has been apparently successfully installed, it will be run a
     /// second time to try...
     Installed,
 }
@@ -335,7 +339,6 @@ impl Handler for () {
 /// Internal adapter trait for using it like other handlers.
 #[allow(unused)]
 pub(crate) trait HandlerInto: Handler + Sized {
-    
     #[inline]
     fn into_mojang(self) -> impl moj::Handler {
         pub(crate) struct Adapter<H: Handler>(pub H);
@@ -346,7 +349,7 @@ pub(crate) trait HandlerInto: Handler + Sized {
         }
         Adapter(self)
     }
-    
+
     #[inline]
     fn into_base(self) -> impl base::Handler {
         self.into_mojang().into_base()
@@ -356,7 +359,6 @@ pub(crate) trait HandlerInto: Handler + Sized {
     fn into_download(self) -> impl download::Handler {
         self.into_mojang().into_download()
     }
-
 }
 
 impl<H: Handler> HandlerInto for H {}
@@ -370,62 +372,45 @@ pub enum Error {
     Mojang(#[source] moj::Error),
     /// If the latest stable or unstable version is requested but doesn't exists.
     #[error("latest version not found for {game_version} (stable: {stable})")]
-    LatestVersionNotFound {
-        game_version: String,
-        stable: bool,
-    },
-    /// The given loader version as requested to launch Forge with has not supported 
+    LatestVersionNotFound { game_version: String, stable: bool },
+    /// The given loader version as requested to launch Forge with has not supported
     /// installer.
     #[error("installer not found: {version}")]
-    InstallerNotFound {
-        version: String,
-    },
-    /// The 'maven-metadata.xml' file requested only is 
+    InstallerNotFound { version: String },
+    /// The 'maven-metadata.xml' file requested only is
     #[error("maven metadata is malformed")]
-    MavenMetadataMalformed {  },
+    MavenMetadataMalformed {},
     /// The 'install_profile.json' installer file was not found.
     #[error("installer profile not found")]
-    InstallerProfileNotFound {  },
-    /// The 'install_profile.json' installer file is present but its versions are 
-    /// incoherent with the expected loader and game versions that should've been 
+    InstallerProfileNotFound {},
+    /// The 'install_profile.json' installer file is present but its versions are
+    /// incoherent with the expected loader and game versions that should've been
     /// downloaded.
     #[error("installer profile incoherent")]
-    InstallerProfileIncoherent {  },
+    InstallerProfileIncoherent {},
     /// The 'version.json' installer file was not found, it contains the version metadata
     /// to be installed.
     #[error("installer version metadata not found")]
-    InstallerVersionMetadataNotFound {  },
+    InstallerVersionMetadataNotFound {},
     /// A file needed to be extracted from the installer but was not found.
     #[error("installer file to extract not found")]
-    InstallerFileNotFound {
-        entry: String,
-    },
+    InstallerFileNotFound { entry: String },
     /// Failed to execute so process.
     #[error("installer processor not found")]
-    InstallerProcessorNotFound {
-        name: Gav,
-    },
+    InstallerProcessorNotFound { name: Gav },
     #[error("installer processor has a main class that could not be found")]
-    InstallerProcessorMainClassNotFound {
-        name: Gav,
-    },
+    InstallerProcessorMainClassNotFound { name: Gav },
     #[error("installer processor has a dependency that could not be found")]
-    InstallerProcessDependencyNotFound {
-        name: Gav,
-        dependency: Gav,
-    },
+    InstallerProcessDependencyNotFound { name: Gav, dependency: Gav },
     /// A processor has failed while running, the process output is linked.
     #[error("installer processor execution failed")]
-    InstallerProcessorFailed {
-        name: Gav,
-        output: Box<Output>,
-    },
+    InstallerProcessorFailed { name: Gav, output: Box<Output> },
     #[error("installer processor output corrupted")]
     InstallerProcessorCorrupted {
         name: Gav,
         file: Box<Path>,
         expected_sha1: Box<[u8; 20]>,
-    }
+    },
 }
 
 impl<T: Into<moj::Error>> From<T> for Error {
@@ -486,7 +471,7 @@ impl<T: Into<String>> From<T> for Version {
 pub struct Repo {
     /// The main metadata XML data.
     main_xml: String,
-    /// The legacy metadata XML data, it's basically used only 
+    /// The legacy metadata XML data, it's basically used only
     legacy_xml: Option<String>,
     /// Special boolean specifying if the repository is the one of NeoForge, this affects
     /// how various things are resolved.
@@ -496,7 +481,6 @@ pub struct Repo {
 }
 
 impl Repo {
-
     /// Request the repository for a given loader.
     pub fn request(loader: Loader) -> Result<Self> {
         match loader {
@@ -507,14 +491,17 @@ impl Repo {
 
     /// Request the online Forge repository.
     fn request_forge() -> Result<Self> {
-
         // This entry doesn't really support caching, but we use this so we can access
         // the resource while being offline.
-        let mut main_entry = download::single_cached("https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml")
-            .set_keep_open()
-            .download(())?;
+        let mut main_entry = download::single_cached(
+            "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml",
+        )
+        .set_keep_open()
+        .download(())?;
 
-        let main_xml = main_entry.read_handle_to_string().unwrap()
+        let main_xml = main_entry
+            .read_handle_to_string()
+            .unwrap()
             .map_err(|e| base::Error::new_io_file(e, main_entry.file()))?;
 
         Ok(Self {
@@ -523,36 +510,46 @@ impl Repo {
             neoforge: false,
             major_versions: FrozenMap::new(),
         })
-
     }
 
     /// Request the online NeoForge repository.
     fn request_neoforge() -> Result<Self> {
-
         // See comment above about caching.
         let mut batch = download::Batch::new();
-        batch.push_cached("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml").set_keep_open();
-        batch.push_cached("https://maven.neoforged.net/releases/net/neoforged/forge/maven-metadata.xml").set_keep_open();
-        
-        let mut result = batch.download(())
+        batch
+            .push_cached(
+                "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml",
+            )
+            .set_keep_open();
+        batch
+            .push_cached(
+                "https://maven.neoforged.net/releases/net/neoforged/forge/maven-metadata.xml",
+            )
+            .set_keep_open();
+
+        let mut result = batch
+            .download(())
             .map_err(|e| base::Error::new_reqwest(e, "request neoforge repo"))?
             .into_result()?;
-        
+
         let main_entry = result.entry_mut(0).unwrap();
-        let main_xml = main_entry.read_handle_to_string().unwrap()
+        let main_xml = main_entry
+            .read_handle_to_string()
+            .unwrap()
             .map_err(|e| base::Error::new_io_file(e, main_entry.file()))?;
 
         let legacy_entry = result.entry_mut(1).unwrap();
-        let legacy_xml = legacy_entry.read_handle_to_string().unwrap()
+        let legacy_xml = legacy_entry
+            .read_handle_to_string()
+            .unwrap()
             .map_err(|e| base::Error::new_io_file(e, legacy_entry.file()))?;
-    
+
         Ok(Self {
             main_xml,
             legacy_xml: Some(legacy_xml),
             neoforge: true,
             major_versions: FrozenMap::new(),
         })
-
     }
 
     /// Return an iterator over all loaders in the repository, the iteration order is not
@@ -574,39 +571,43 @@ impl Repo {
     /// and stable or not. Note that the latest stable version is also the latest unstable
     /// one if no version is unstable before it.
     pub fn find_latest(&self, game_version: &str, stable: bool) -> Option<RepoVersion<'_>> {
-
         // Parse the game version to build a prefix to match versions against.
-        let prefix = 
-            if !self.neoforge {
-                if game_version == "1.7.10-pre4" {
-                    format!("1.7.10_pre4-")
-                } else {
-                    format!("{game_version}-")
-                }
+        let prefix = if !self.neoforge {
+            if game_version == "1.7.10-pre4" {
+                format!("1.7.10_pre4-")
             } else {
-                let [major, minor, patch] = parse_game_version(game_version)?;
-                if major >= 26 {
-                    format!("{major}.{minor}.{patch}.")
-                } else if major == 20 && minor == 1 {
-                    // We ignore the special case of 47.1.82 because it's not the latest 
-                    // version anyway...
-                    format!("1.20.1-")
-                } else {
-                    format!("{major}.{minor}.")
-                }
-            };
+                format!("{game_version}-")
+            }
+        } else {
+            let [major, minor, patch] = parse_game_version(game_version)?;
+            if major >= 26 {
+                format!("{major}.{minor}.{patch}.")
+            } else if major == 20 && minor == 1 {
+                // We ignore the special case of 47.1.82 because it's not the latest
+                // version anyway...
+                format!("1.20.1-")
+            } else {
+                format!("{major}.{minor}.")
+            }
+        };
 
         // To search the maximum version...
         let mut max_loader = [0; 4];
         let mut max_version = None;
         for version in self.iter() {
             // Filter versions that starts with the right prefix...
-            let Some(loader) = version.name().strip_prefix(&prefix) else { continue };
+            let Some(loader) = version.name().strip_prefix(&prefix) else {
+                continue;
+            };
             // Ignore unstable versions when not requested!
-            if stable && !version.is_stable() { continue }
-            // Parse the loader version as 4-digit versions, because Forge used to have 
+            if stable && !version.is_stable() {
+                continue;
+            }
+            // Parse the loader version as 4-digit versions, because Forge used to have
             // such long versions, ignoring versions that could not be parsed.
-            let Some(loader) = parse_generic_version::<4, 1>(loader, true) else { continue };
+            let Some(loader) = parse_generic_version::<4, 1>(loader, true) else {
+                continue;
+            };
             // Then compare to find the maximum version...
             if loader > max_loader {
                 max_loader = loader;
@@ -615,9 +616,7 @@ impl Repo {
         }
 
         max_version
-
     }
-
 }
 
 /// An iterator over all loader versions in this repository.
@@ -629,11 +628,9 @@ pub struct RepoIter<'a> {
 }
 
 impl<'a> Iterator for RepoIter<'a> {
-
     type Item = RepoVersion<'a>;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
-        
         let version = match self.main.next() {
             Some(v) => v,
             None => self.legacy.as_mut()?.next()?,
@@ -643,13 +640,11 @@ impl<'a> Iterator for RepoIter<'a> {
             repo: self.repo,
             version,
         })
-
     }
-
 }
 
 // Because 'MetadataParser' also implement this.
-impl FusedIterator for RepoIter<'_> {  }
+impl FusedIterator for RepoIter<'_> {}
 
 /// Reference to a version owned by the requested repository.
 #[derive(Debug)]
@@ -659,7 +654,6 @@ pub struct RepoVersion<'a> {
 }
 
 impl<'a> RepoVersion<'a> {
-
     /// Return the full name of this loader, containing both game and loader versions.
     /// Note that this naming is inconsistent.
     pub fn name(&self) -> &'a str {
@@ -676,13 +670,15 @@ impl<'a> RepoVersion<'a> {
             } else if self.version.starts_with("0.25w14craftmine.") {
                 // Special case for 25w14craftmine which have bizarre versioning...
                 "25w14craftmine"
-            } else if let Some([major, minor, patch]) = parse_generic_version::<3, 2>(self.version, true) {
+            } else if let Some([major, minor, patch]) =
+                parse_generic_version::<3, 2>(self.version, true)
+            {
                 // Since 2026, Mojang changed the naming scheme of the vanilla version by
-                // removing the '1.' prefix. This means that we can just take a part of 
+                // removing the '1.' prefix. This means that we can just take a part of
                 // the name.
                 if major >= 26 {
                     if minor == 0 {
-                        ""  // Should not happen since 26+ majors all have minors
+                        "" // Should not happen since 26+ majors all have minors
                     } else {
                         let major_len = 1 + major.ilog10();
                         let minor_len = 1 + minor.ilog10();
@@ -703,14 +699,14 @@ impl<'a> RepoVersion<'a> {
                     })
                 }
             } else {
-                ""  // Should not happen
+                "" // Should not happen
             }
         } else {
             match self.version.split_once('-') {
                 // Special case with forge, this is the only pre-release supported.
                 Some(("1.7.10_pre4", _)) => "1.7.10-pre4",
                 Some((game_version, _)) => game_version,
-                None => ""  // Should not happen
+                None => "", // Should not happen
             }
         }
     }
@@ -720,10 +716,9 @@ impl<'a> RepoVersion<'a> {
         if self.repo.neoforge {
             !self.version.ends_with("-beta") && !self.version.contains("-alpha")
         } else {
-            true  // Forge is always stable
+            true // Forge is always stable
         }
     }
-
 }
 
 // ========================== //
@@ -733,7 +728,7 @@ impl<'a> RepoVersion<'a> {
 /// Represent an abstract version that can be provided to the common Forge installer.
 #[derive(Debug, Clone)]
 struct InstallConfig {
-    /// Default prefix for the full root version id of the format 
+    /// Default prefix for the full root version id of the format
     /// '<default prefix>-<game version>-<loader version>.
     default_prefix: &'static str,
     /// The full name of this version.
@@ -748,7 +743,7 @@ struct InstallConfig {
     /// Set to true if this loader is expected to have a legacy install profile.
     legacy_install_profile: bool,
     /// Set to true when the installer processors should be checked, this exists because
-    /// some old versions systematically generate wrong SHA-1 and we prefer allowing 
+    /// some old versions systematically generate wrong SHA-1 and we prefer allowing
     /// these versions to be installed even if files might be invalid.
     check_processor_outputs: bool,
 }
@@ -769,7 +764,7 @@ enum InstallConfigCheckLibraries {
     /// - `net/minecraft/client/<game-version>-<mcp-version>/client-<game-version>-<mcp-version>-srg.jar`
     /// - `net/minecraft/client/<game-version>-<mcp-version>/client-<game-version>-<mcp-version>-extra.jar`
     ForgeV2,
-    /// The first libraries set for NeoForge that was different from Forge, starting 
+    /// The first libraries set for NeoForge that was different from Forge, starting
     /// with NeoForge version 21.10.37-beta:
     /// - `net/neoforged/neoforge/<version>/neoforge-<version>-universal.jar`
     /// - `net/neoforged/minecraft-client-patched/<version>/minecraft-client-patched-<version>.jar`
@@ -777,15 +772,15 @@ enum InstallConfigCheckLibraries {
 }
 
 impl InstallConfig {
-
-    /// Create a new Forge version from its raw name. 
-    /// 
-    /// This constructor will parse the version to internally change the installer 
+    /// Create a new Forge version from its raw name.
+    ///
+    /// This constructor will parse the version to internally change the installer
     /// behavior.
     fn new_forge(name: &str) -> Option<Self> {
-
         let (game_version, loader_version) = name.split_once('-')?;
-        let (loader_version, _) = loader_version.split_once('-').unwrap_or((loader_version, ""));
+        let (loader_version, _) = loader_version
+            .split_once('-')
+            .unwrap_or((loader_version, ""));
         let loader_version = parse_generic_version::<4, 2>(loader_version, false);
 
         Some(Self {
@@ -793,47 +788,47 @@ impl InstallConfig {
             name: Gav::new("net.minecraftforge", "forge", name, None, None)?,
             repo_url: "https://maven.minecraftforge.net",
             game_version: if game_version == "1.7.10_pre4" {
-                "1.7.10-pre4".to_string()  // The only pre-release supported.
+                "1.7.10-pre4".to_string() // The only pre-release supported.
             } else {
                 game_version.to_string()
             },
-            // The required runtime libraries are different depending on the forge 
+            // The required runtime libraries are different depending on the forge
             // version.
             check_libraries: match loader_version {
                 // The 'extra' classifier is stored in different directories depending on version:
                 // v >= 1.16.1-32.0.20: inside '<game_version>-<mcp_version>'
                 // v <= 1.16.1-32.0.19: inside '<game_version>'
                 Some(v) if v >= [32, 0, 20, 0] => Some(InstallConfigCheckLibraries::ForgeV2),
-                // The first version to actually use processors was 1.13.2-25.0.9, 
+                // The first version to actually use processors was 1.13.2-25.0.9,
                 // therefore we only check libraries for this version after onward.
                 Some(v) if v >= [25, 0, 9, 0] => Some(InstallConfigCheckLibraries::ForgeV1),
                 // No check to do because there was no processor.
-                _ => None
+                _ => None,
             },
             // The install profiles comes in multiples forms:
-            // >= 1.12.2-14.23.5.2851: There are two files, 'install_profile.json' which 
-            //  contains processors and shared data, and `version.json` which is the raw 
+            // >= 1.12.2-14.23.5.2851: There are two files, 'install_profile.json' which
+            //  contains processors and shared data, and `version.json` which is the raw
             //  version meta to be fetched.
             // <= 1.12.2-14.23.5.2847: There is only an 'install_profile.json' with the
-            //  version meta stored in 'versionInfo' object. Each library have two keys 
-            //  'serverreq' and 'clientreq' that should be removed when the profile is 
+            //  version meta stored in 'versionInfo' object. Each library have two keys
+            //  'serverreq' and 'clientreq' that should be removed when the profile is
             //  returned.
-            legacy_install_profile: loader_version.map(|v| v <= [14, 23, 5, 2847]).unwrap_or(false),
+            legacy_install_profile: loader_version
+                .map(|v| v <= [14, 23, 5, 2847])
+                .unwrap_or(false),
             // v >= 1.14.4-28.1.16: hashes are valid
             // 1.13 <= v <= 1.14.4-28.1.15: hashes are invalid
             // 1.12.2-14.23.5.2851 <= v < 1.13: no processor therefore no hash to check
             // v <= 1.12.2-14.23.5.2847: legacy installer, no processor
             check_processor_outputs: loader_version.map(|v| v >= [28, 1, 16, 0]).unwrap_or(false),
         })
-
     }
 
     /// Create a new NeoForge version from its name.
-    /// 
-    /// This constructor will parse the version to internally change the installer 
+    ///
+    /// This constructor will parse the version to internally change the installer
     /// behavior.
     fn new_neoforge(name: &str) -> Option<Self> {
-
         let gav;
         let game_version;
         let check_libraries;
@@ -867,23 +862,19 @@ impl InstallConfig {
             legacy_install_profile: false,
             check_processor_outputs: true,
         })
-
     }
-
 }
 
 impl InstallConfigCheckLibraries {
-
     #[inline]
     fn has_loader_universal(&self) -> bool {
-        true  // All loader versions needs the universal library.
+        true // All loader versions needs the universal library.
     }
 
     #[inline]
     fn has_loader_client(&self) -> bool {
         matches!(self, Self::ForgeV1 | Self::ForgeV2)
     }
-
 }
 
 /// Try installing the mod loader.
@@ -895,23 +886,27 @@ fn try_install(
     side: serde::InstallSide,
     reason: InstallReason,
 ) -> Result<()> {
-
     let tmp_dir = env::temp_dir().joined(root_version);
-    handler.on_event(Event::Installing { tmp_dir: &tmp_dir, reason });
+    handler.on_event(Event::Installing {
+        tmp_dir: &tmp_dir,
+        reason,
+    });
 
-    // The first thing we do is fetching the installer, so it ends early if there is 
+    // The first thing we do is fetching the installer, so it ends early if there is
     // simply no installer for this version!
-    handler.on_event(Event::FetchInstaller { version: config.name.version() });
+    handler.on_event(Event::FetchInstaller {
+        version: config.name.version(),
+    });
 
     // Handle the case where the next installer gav could not be constructed, too long?
     let Some(installer_gav) = config.name.with_classifier(Some("installer")) else {
-        return Err(Error::InstallerNotFound { 
+        return Err(Error::InstallerNotFound {
             version: config.name.version().to_string(),
         });
     };
 
     let installer_url = format!("{}/{}", config.repo_url, installer_gav.url());
-    
+
     // Download and check result in case installer is just not found.
     let entry = download::single(installer_url, tmp_dir.join("installer.jar"))
         .set_keep_open()
@@ -921,7 +916,7 @@ fn try_install(
         Ok(entry) => entry,
         Err(e) => {
             if let EntryErrorKind::InvalidStatus(404) = e.kind() {
-                return Err(Error::InstallerNotFound { 
+                return Err(Error::InstallerNotFound {
                     version: config.name.version().to_string(),
                 });
             } else {
@@ -935,8 +930,10 @@ fn try_install(
     let mut installer_zip = ZipArchive::new(installer_reader)
         .map_err(|e| base::Error::new_zip_file(e, installer_file))?;
 
-    handler.on_event(Event::FetchedInstaller { version: config.name.version() });
-    
+    handler.on_event(Event::FetchedInstaller {
+        version: config.name.version(),
+    });
+
     // We need to ensure that the underlying game version is fully installed. Here we
     // just forward the handler as-is, and we check for version not found to warn
     // about an non-existing game version. We keep the installed, or found, JVM exec
@@ -952,22 +949,31 @@ fn try_install(
     const PROFILE_ENTRY: &str = "install_profile.json";
     let profile = match installer_zip.by_name(PROFILE_ENTRY) {
         Ok(reader) => {
-            
             let mut deserializer = serde_json::Deserializer::from_reader(reader);
             let res = if config.legacy_install_profile {
-                serde_path_to_error::deserialize::<_, serde::LegacyInstallProfile>(&mut deserializer)
-                    .map(InstallProfileKind::Legacy)
+                serde_path_to_error::deserialize::<_, serde::LegacyInstallProfile>(
+                    &mut deserializer,
+                )
+                .map(InstallProfileKind::Legacy)
             } else {
-                serde_path_to_error::deserialize::<_, serde::ModernInstallProfile>(&mut deserializer)
-                    .map(InstallProfileKind::Modern)
+                serde_path_to_error::deserialize::<_, serde::ModernInstallProfile>(
+                    &mut deserializer,
+                )
+                .map(InstallProfileKind::Modern)
             };
 
-            res.map_err(|e| base::Error::new_json(e, format!("entry: {}, from: {}", 
-                PROFILE_ENTRY, 
-                installer_file.display())))?
-
+            res.map_err(|e| {
+                base::Error::new_json(
+                    e,
+                    format!(
+                        "entry: {}, from: {}",
+                        PROFILE_ENTRY,
+                        installer_file.display()
+                    ),
+                )
+            })?
         }
-        Err(_) => return Err(Error::InstallerProfileNotFound {  })
+        Err(_) => return Err(Error::InstallerProfileNotFound {}),
     };
 
     // The installer directly installs libraries to these directories.
@@ -981,9 +987,8 @@ fn try_install(
 
     match profile {
         InstallProfileKind::Modern(profile) => {
-            
             if profile.minecraft != config.game_version {
-                return Err(Error::InstallerProfileIncoherent {  });
+                return Err(Error::InstallerProfileIncoherent {});
             }
 
             // Immediately try, and keep the version metadata, this avoid launching this
@@ -992,22 +997,36 @@ fn try_install(
             metadata = match installer_zip.by_name(metadata_entry) {
                 Ok(reader) => {
                     let mut deserializer = serde_json::Deserializer::from_reader(reader);
-                    serde_path_to_error::deserialize::<_, Box<base::serde::VersionMetadata>>(&mut deserializer)
-                        .map_err(|e| base::Error::new_json(e, format!("entry: {}, from: {}",
-                            metadata_entry,
-                            installer_file.display())))?
+                    serde_path_to_error::deserialize::<_, Box<base::serde::VersionMetadata>>(
+                        &mut deserializer,
+                    )
+                    .map_err(|e| {
+                        base::Error::new_json(
+                            e,
+                            format!(
+                                "entry: {}, from: {}",
+                                metadata_entry,
+                                installer_file.display()
+                            ),
+                        )
+                    })?
                 }
-                Err(_) => return Err(Error::InstallerVersionMetadataNotFound {  })
+                Err(_) => return Err(Error::InstallerVersionMetadataNotFound {}),
             };
 
             handler.on_event(Event::FetchInstallerLibraries);
-            
+
             // Some early (still modern) installers (<= 1.16.5) embed the forge universal
             // JAR, we need to extract it given its path. It also appears that more modern
             // versions have this property back...
             if let Some(name) = &profile.path {
                 let lib_file = libraries_dir.join(name.file());
-                extract_installer_maven_artifact(installer_file, &mut installer_zip, name, &lib_file)?;
+                extract_installer_maven_artifact(
+                    installer_file,
+                    &mut installer_zip,
+                    name,
+                    &lib_file,
+                )?;
             }
 
             // We keep as map of libraries to their file path, this is also used because
@@ -1016,10 +1035,9 @@ fn try_install(
             let mut batch = Batch::new();
 
             for lib in &profile.libraries {
-
                 // Ignore duplicated libs, see above.
                 if libraries.contains_key(&lib.name) {
-                    continue
+                    continue;
                 }
 
                 let lib_dl = &lib.downloads.artifact;
@@ -1031,23 +1049,33 @@ fn try_install(
                 };
 
                 libraries.insert(&lib.name, lib_file.clone());
-                
+
                 if !lib_dl.download.url.is_empty() {
-                    let check_lib_sha1 = lib_dl.download.sha1.as_deref().filter(|_| mojang.base().strict_libraries_check());
+                    let check_lib_sha1 = lib_dl
+                        .download
+                        .sha1
+                        .as_deref()
+                        .filter(|_| mojang.base().strict_libraries_check());
                     if !base::check_file(&lib_file, lib_dl.download.size, check_lib_sha1)? {
-                        batch.push(lib_dl.download.url.to_string(), lib_file)
+                        batch
+                            .push(lib_dl.download.url.to_string(), lib_file)
                             .set_expected_size(lib_dl.download.size)
                             .set_expected_sha1(lib_dl.download.sha1.as_deref().copied());
                     }
                 } else {
-                    extract_installer_maven_artifact(installer_file, &mut installer_zip, &lib.name, &lib_file)?;
+                    extract_installer_maven_artifact(
+                        installer_file,
+                        &mut installer_zip,
+                        &lib.name,
+                        &lib_file,
+                    )?;
                 }
-
             }
 
             // Download all libraries just before running post processors.
             if !batch.is_empty() {
-                batch.download((&mut *handler).into_download())
+                batch
+                    .download((&mut *handler).into_download())
                     .map_err(|e| base::Error::new_reqwest(e, "download forge libraries"))?
                     .into_result()?;
             }
@@ -1074,7 +1102,12 @@ fn try_install(
                         // This is a file that we should extract to the temp directory.
                         let entry = entry.strip_prefix('/').unwrap_or(entry);
                         let tmp_file = tmp_dir.join(base::check_path_relative_and_safe(entry)?);
-                        extract_installer_file(installer_file, &mut installer_zip, entry, &tmp_file)?;
+                        extract_installer_file(
+                            installer_file,
+                            &mut installer_zip,
+                            entry,
+                            &tmp_file,
+                        )?;
                         InstallDataTypedEntry::File(tmp_file)
                     }
                 };
@@ -1082,21 +1115,39 @@ fn try_install(
             }
 
             // Builtin entries.
-            data.insert("SIDE".to_string(), InstallDataTypedEntry::Literal(side.as_str().to_string()));
-            data.insert("MINECRAFT_JAR".to_string(), InstallDataTypedEntry::File(game_client_file));
-            data.insert("MINECRAFT_VERSION".to_string(), InstallDataTypedEntry::Literal(config.game_version.to_string()));
+            data.insert(
+                "SIDE".to_string(),
+                InstallDataTypedEntry::Literal(side.as_str().to_string()),
+            );
+            data.insert(
+                "MINECRAFT_JAR".to_string(),
+                InstallDataTypedEntry::File(game_client_file),
+            );
+            data.insert(
+                "MINECRAFT_VERSION".to_string(),
+                InstallDataTypedEntry::Literal(config.game_version.to_string()),
+            );
             // Currently no support for ROOT because it's apparently used only for server...
             // data.insert("ROOT".to_string(), InstallDataTypedEntry::File(mojang.standard().));
-            data.insert("INSTALLER".to_string(), InstallDataTypedEntry::File(installer_file.to_path_buf()));
-            data.insert("LIBRARY_DIR".to_string(), InstallDataTypedEntry::File(libraries_dir.to_path_buf()));
+            data.insert(
+                "INSTALLER".to_string(),
+                InstallDataTypedEntry::File(installer_file.to_path_buf()),
+            );
+            data.insert(
+                "LIBRARY_DIR".to_string(),
+                InstallDataTypedEntry::File(libraries_dir.to_path_buf()),
+            );
 
             // Now we process each post-processor in order, each processor will refer to
             // one of the library installed earlier.
             for processor in &profile.processors {
-
                 if let Some(processor_sides) = &processor.sides {
-                    if !processor_sides.iter().copied().any(|processor_side| processor_side == side) {
-                        continue
+                    if !processor_sides
+                        .iter()
+                        .copied()
+                        .any(|processor_side| processor_side == side)
+                    {
+                        continue;
                     }
                 }
 
@@ -1133,14 +1184,14 @@ fn try_install(
                     None
                 };
 
-                handler.on_event(Event::RunInstallerProcessor { name: &processor.jar, task });
+                handler.on_event(Event::RunInstallerProcessor {
+                    name: &processor.jar,
+                    task,
+                });
 
                 // Construct the command to run the processor.
                 let mut command = Command::new(&jvm_file);
-                command
-                    .arg("-cp")
-                    .arg(class_path)
-                    .arg(&main_class);
+                command.arg("-cp").arg(class_path).arg(&main_class);
 
                 for arg in &processor.args {
                     if let Some(arg) = format_processor_arg(&arg, &libraries_dir, &data) {
@@ -1151,8 +1202,9 @@ fn try_install(
                     }
                 }
 
-                let output = command.output()
-                    .map_err(|e| base::Error::new_io(e, format!("spawn: {}", jvm_file.display())))?;
+                let output = command.output().map_err(|e| {
+                    base::Error::new_io(e, format!("spawn: {}", jvm_file.display()))
+                })?;
 
                 if !output.status.success() {
                     return Err(Error::InstallerProcessorFailed {
@@ -1164,9 +1216,15 @@ fn try_install(
                 // If process SHA-1 check is enabled...
                 if config.check_processor_outputs {
                     for (file, sha1) in &processor.outputs {
-                        let Some(file) = format_processor_arg(&file, &libraries_dir, &data) else { continue };
-                        let Some(sha1) = format_processor_arg(&sha1, &libraries_dir, &data) else { continue };
-                        let Some(sha1) = crate::serde::parse_hex_bytes::<20>(&sha1) else { continue };
+                        let Some(file) = format_processor_arg(&file, &libraries_dir, &data) else {
+                            continue;
+                        };
+                        let Some(sha1) = format_processor_arg(&sha1, &libraries_dir, &data) else {
+                            continue;
+                        };
+                        let Some(sha1) = crate::serde::parse_hex_bytes::<20>(&sha1) else {
+                            continue;
+                        };
                         let file = Path::new(&file);
                         if !base::check_file(file, None, Some(&sha1))? {
                             return Err(Error::InstallerProcessorCorrupted {
@@ -1177,16 +1235,13 @@ fn try_install(
                         }
                     }
                 }
-                
             }
-
         }
         InstallProfileKind::Legacy(profile) => {
-            
             metadata = profile.version_info;
 
             // Older versions used to require libraries that are no longer installed
-            // by parent versions, therefore it's required to add url if not 
+            // by parent versions, therefore it's required to add url if not
             // provided, pointing to maven central repository, for downloading.
             for lib in &mut metadata.libraries {
                 if lib.url.is_none() {
@@ -1204,7 +1259,6 @@ fn try_install(
             let jar_file = libraries_dir.join(profile.install.path.file());
             let jar_entry = &profile.install.file_path[..];
             extract_installer_file(installer_file, &mut installer_zip, &jar_entry, &jar_file)?;
-
         }
     }
 
@@ -1214,7 +1268,6 @@ fn try_install(
     handler.on_event(Event::Installed);
 
     Ok(())
-
 }
 
 #[derive(Debug)]
@@ -1237,11 +1290,10 @@ enum InstallDataTypedEntry {
 /// Format a processor argument, NOTE THAT it is directly implemented, especially from
 /// `net.minecraftforge.installer.json.Util.replaceToken` class inside the installer.
 fn format_processor_arg(
-    input: &str, 
-    libraries_dir: &Path, 
-    data: &HashMap<String, InstallDataTypedEntry>
+    input: &str,
+    libraries_dir: &Path,
+    data: &HashMap<String, InstallDataTypedEntry>,
 ) -> Option<String> {
-
     if matches!(input.as_bytes(), [b'[', .., b']']) {
         let gav = input[1..input.len() - 1].parse::<Gav>().ok()?;
         return Some(format!("{}", libraries_dir.join(&gav.file()).display()));
@@ -1272,7 +1324,8 @@ fn format_processor_arg(
             '}' if !escape && matches!(token, Some(TokenKind::Data)) => {
                 match data.get(&token_buf)? {
                     InstallDataTypedEntry::Library(gav) => {
-                        write!(global_buf, "{}", libraries_dir.join(&gav.file()).display()).unwrap();
+                        write!(global_buf, "{}", libraries_dir.join(&gav.file()).display())
+                            .unwrap();
                     }
                     InstallDataTypedEntry::Literal(lit) => {
                         global_buf.push_str(lit);
@@ -1304,9 +1357,7 @@ fn format_processor_arg(
     }
 
     Some(global_buf)
-
 }
-
 
 /// For the modern installer, extract from its archive the given artifact to the library
 /// directory.
@@ -1327,47 +1378,47 @@ fn extract_installer_file<R: Read + Seek>(
     src_entry: &str,
     dst_file: &Path,
 ) -> Result<()> {
+    let mut reader =
+        installer_zip
+            .by_name(&src_entry)
+            .map_err(|_| Error::InstallerFileNotFound {
+                entry: src_entry.to_string(),
+            })?;
 
-    let mut reader = installer_zip.by_name(&src_entry)
-        .map_err(|_| Error::InstallerFileNotFound { 
-            entry: src_entry.to_string(),
-        })?;
-
-    // We unwrap because we either extract a .jar to its library directory, or to a 
+    // We unwrap because we either extract a .jar to its library directory, or to a
     // temp directory (so it has a parent).
     let parent_dir = dst_file.parent().unwrap();
-    fs::create_dir_all(parent_dir)
-        .map_err(|e| base::Error::new_io_file(e, parent_dir))?;
+    fs::create_dir_all(parent_dir).map_err(|e| base::Error::new_io_file(e, parent_dir))?;
 
     let mut writer = File::create(dst_file)
         .map_err(|e| base::Error::new_io_file(e, dst_file))
         .map(BufWriter::new)?;
 
-    io::copy(&mut reader, &mut writer)
-        .map_err(|e| base::Error::new_io(e, format!("extract: {}, from: {}", 
-            src_entry, 
-            installer_file.display())))?;
+    io::copy(&mut reader, &mut writer).map_err(|e| {
+        base::Error::new_io(
+            e,
+            format!("extract: {}, from: {}", src_entry, installer_file.display()),
+        )
+    })?;
 
     Ok(())
-
 }
 
 /// From a JAR file path, open it and try to find the main class path from the manifest.
 fn find_jar_main_class(jar_file: &Path) -> Result<Option<String>> {
-
     let jar_reader = File::open(jar_file)
         .map_err(|e| base::Error::new_io_file(e, jar_file))
         .map(BufReader::new)?;
 
-    let mut jar_zip = ZipArchive::new(jar_reader)
-        .map_err(|e| base::Error::new_zip_file(e, jar_file))?;
+    let mut jar_zip =
+        ZipArchive::new(jar_reader).map_err(|e| base::Error::new_zip_file(e, jar_file))?;
 
-    let Ok(mut manifest_reader) = jar_zip.by_name("META-INF/MANIFEST.MF")
-        .map(BufReader::new) else {
-            // The manifest was not found, is should NEVER happen, we ignore this.
-            return Ok(None);
-        };
-    
+    let Ok(mut manifest_reader) = jar_zip.by_name("META-INF/MANIFEST.MF").map(BufReader::new)
+    else {
+        // The manifest was not found, is should NEVER happen, we ignore this.
+        return Ok(None);
+    };
+
     const MAIN_CLASS_KEY: &str = "Main-Class: ";
 
     let mut line = String::new();
@@ -1376,7 +1427,7 @@ fn find_jar_main_class(jar_file: &Path) -> Result<Option<String>> {
             if let Some(last_non_whitespace) = line.rfind(|c: char| !c.is_whitespace()) {
                 line.truncate(last_non_whitespace + 1);
                 line.drain(0..MAIN_CLASS_KEY.len());
-                return Ok(Some(line))
+                return Ok(Some(line));
             } else {
                 // The main class is empty?
                 return Ok(None);
@@ -1386,13 +1437,18 @@ fn find_jar_main_class(jar_file: &Path) -> Result<Option<String>> {
     }
 
     Ok(None)
-    
 }
 
 /// Generic version parsing with dot separator and default value to zero.
-fn parse_generic_version<const MAX: usize, const MIN: usize>(mut version: &str, ignore_dash: bool) -> Option<[u16; MAX]> {
+fn parse_generic_version<const MAX: usize, const MIN: usize>(
+    mut version: &str,
+    ignore_dash: bool,
+) -> Option<[u16; MAX]> {
     if ignore_dash {
-        version = version.split_once('-').map(|(version, _)| version).unwrap_or(version);
+        version = version
+            .split_once('-')
+            .map(|(version, _)| version)
+            .unwrap_or(version);
     }
     let mut it = version.split('.');
     let mut ret = [0; MAX];
@@ -1413,7 +1469,10 @@ fn parse_game_version(version: &str) -> Option<[u16; 3]> {
     match version.strip_prefix("1.") {
         Some(version) => {
             // For versions prior to 26.1
-            if version.contains("-pre") || version.contains("-rc") || version.contains(" Pre-Release ") {
+            if version.contains("-pre")
+                || version.contains("-rc")
+                || version.contains(" Pre-Release ")
+            {
                 None
             } else {
                 parse_generic_version::<3, 1>(version, false)
@@ -1421,7 +1480,8 @@ fn parse_game_version(version: &str) -> Option<[u16; 3]> {
         }
         None => {
             // For the new 2026+ scheme
-            if version.contains("-pre") || version.contains("-rc") || version.contains("-snapshot") {
+            if version.contains("-pre") || version.contains("-rc") || version.contains("-snapshot")
+            {
                 None
             } else {
                 parse_generic_version::<3, 2>(version, false)
@@ -1434,20 +1494,43 @@ fn parse_game_version(version: &str) -> Option<[u16; 3]> {
 mod test {
 
     use super::*;
-    
+
     #[test]
     fn parse_version() {
-
         assert_eq!(parse_generic_version::<4, 2>("1", false), None);
-        assert_eq!(parse_generic_version::<4, 2>("1.2", false), Some([1, 2, 0, 0]));
-        assert_eq!(parse_generic_version::<4, 2>("1.2.3", false), Some([1, 2, 3, 0]));
-        assert_eq!(parse_generic_version::<4, 2>("1.2.3.4", false), Some([1, 2, 3, 4]));
-        assert_eq!(parse_generic_version::<4, 2>("1.2.3.4.5", false), Some([1, 2, 3, 4]));
-        assert_eq!(parse_generic_version::<4, 2>("1.2.3.4.5-pre", false), Some([1, 2, 3, 4]));
+        assert_eq!(
+            parse_generic_version::<4, 2>("1.2", false),
+            Some([1, 2, 0, 0])
+        );
+        assert_eq!(
+            parse_generic_version::<4, 2>("1.2.3", false),
+            Some([1, 2, 3, 0])
+        );
+        assert_eq!(
+            parse_generic_version::<4, 2>("1.2.3.4", false),
+            Some([1, 2, 3, 4])
+        );
+        assert_eq!(
+            parse_generic_version::<4, 2>("1.2.3.4.5", false),
+            Some([1, 2, 3, 4])
+        );
+        assert_eq!(
+            parse_generic_version::<4, 2>("1.2.3.4.5-pre", false),
+            Some([1, 2, 3, 4])
+        );
         assert_eq!(parse_generic_version::<4, 2>("1.2.3.4-pre", false), None);
-        assert_eq!(parse_generic_version::<4, 2>("1.2.3.4-pre", true), Some([1, 2, 3, 4]));
-        assert_eq!(parse_generic_version::<4, 2>("1.2.3-pre", true), Some([1, 2, 3, 0]));
-        assert_eq!(parse_generic_version::<4, 2>("1.2-pre", true), Some([1, 2, 0, 0]));
+        assert_eq!(
+            parse_generic_version::<4, 2>("1.2.3.4-pre", true),
+            Some([1, 2, 3, 4])
+        );
+        assert_eq!(
+            parse_generic_version::<4, 2>("1.2.3-pre", true),
+            Some([1, 2, 3, 0])
+        );
+        assert_eq!(
+            parse_generic_version::<4, 2>("1.2-pre", true),
+            Some([1, 2, 0, 0])
+        );
         assert_eq!(parse_generic_version::<4, 2>("1-pre", true), None);
 
         assert_eq!(parse_game_version("25w21a"), None);
@@ -1462,7 +1545,5 @@ mod test {
         assert_eq!(parse_game_version("26.1-rc-3"), None);
         assert_eq!(parse_game_version("26.1"), Some([26, 1, 0]));
         assert_eq!(parse_game_version("26.1.1"), Some([26, 1, 1]));
-
     }
-
 }

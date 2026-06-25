@@ -1,27 +1,31 @@
 //! Various uncategorized utilities.
 
-use std::path::{Component, Path, PathBuf};
 use std::ffi::OsStr;
-
+use std::path::{Component, Path, PathBuf};
 
 /// Extension to the standard [`Path`].
 pub trait PathExt {
-
     /// A shortcut method to join a file name with its extension to the current path.
     /// This shortcut avoids a temporary allocation of a formatted string when joining.
-    fn join_with_extension<P: AsRef<Path>, S: AsRef<OsStr>>(&self, name: P, extension: S) -> PathBuf;
+    fn join_with_extension<P: AsRef<Path>, S: AsRef<OsStr>>(
+        &self,
+        name: P,
+        extension: S,
+    ) -> PathBuf;
 
     fn append<S: AsRef<OsStr>>(&self, s: S) -> PathBuf;
 
     /// Returns true if this path is both only relative and safe to join to a root dir.
     fn is_relative_and_safe(&self) -> bool;
-
 }
 
 impl PathExt for Path {
-
     #[inline]
-    fn join_with_extension<P: AsRef<Path>, S: AsRef<OsStr>>(&self, name: P, extension: S) -> PathBuf {
+    fn join_with_extension<P: AsRef<Path>, S: AsRef<OsStr>>(
+        &self,
+        name: P,
+        extension: S,
+    ) -> PathBuf {
         self.join(name).appended(".").appended(extension)
     }
 
@@ -31,27 +35,23 @@ impl PathExt for Path {
     }
 
     fn is_relative_and_safe(&self) -> bool {
-        self.components().all(|c| matches!(c, Component::CurDir | Component::Normal(_)))
+        self.components()
+            .all(|c| matches!(c, Component::CurDir | Component::Normal(_)))
     }
-
 }
-
 
 /// Extension to the standard [`PathBuf`], mainly to ease joining and raw appending. In
 /// this launcher we do a lot of path joining so we don't want to allocate each time.
 pub trait PathBufExt {
-
     /// Return this path joined with another one, this is different from [`Path::join`]
     /// in that is doesn't reallocate a new path on each join.
     fn joined<P: AsRef<Path>>(self, path: P) -> Self;
 
     /// Return this path appended with another string, this doesn't add any path separator.
     fn appended<S: AsRef<OsStr>>(self, s: S) -> Self;
-
 }
 
 impl PathBufExt for PathBuf {
-    
     #[inline]
     fn joined<P: AsRef<Path>>(mut self, path: P) -> Self {
         self.push(path);
@@ -63,9 +63,7 @@ impl PathBufExt for PathBuf {
         self.as_mut_os_string().push(s);
         self
     }
-
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -74,14 +72,20 @@ mod tests {
 
     #[test]
     fn paths() {
-
         const SEP: &str = std::path::MAIN_SEPARATOR_STR;
-        
-        let path = Path::new("foo");
-        assert_eq!(path.join_with_extension("bar", "json"), PathBuf::from(format!("foo{SEP}bar.json")));
-        assert_eq!(path.append(SEP).appended("bar.json"), PathBuf::from(format!("foo{SEP}bar.json")));
-        assert_eq!(path.join("bar").joined("baz"), PathBuf::from(format!("foo{SEP}bar{SEP}baz")));
-        
-    }
 
+        let path = Path::new("foo");
+        assert_eq!(
+            path.join_with_extension("bar", "json"),
+            PathBuf::from(format!("foo{SEP}bar.json"))
+        );
+        assert_eq!(
+            path.append(SEP).appended("bar.json"),
+            PathBuf::from(format!("foo{SEP}bar.json"))
+        );
+        assert_eq!(
+            path.join("bar").joined("baz"),
+            PathBuf::from(format!("foo{SEP}bar{SEP}baz"))
+        );
+    }
 }

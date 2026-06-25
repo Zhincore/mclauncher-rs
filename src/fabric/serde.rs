@@ -16,7 +16,7 @@ pub struct Loader {
     pub build: u32,
     pub maven: Gav,
     pub version: String,
-    pub stable: Option<bool>,  // Absent for some APIs (quilt)
+    pub stable: Option<bool>, // Absent for some APIs (quilt)
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
