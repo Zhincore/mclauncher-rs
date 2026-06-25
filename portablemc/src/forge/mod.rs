@@ -104,7 +104,7 @@ impl Installer {
             Version::Name(name) => name.clone(),
             Version::Stable(game_version) | Version::Unstable(game_version) => {
                 let stable = matches!(version, Version::Stable(_));
-                match Repo::request(loader)?.find_latest(&game_version, stable) {
+                match Repo::request(loader)?.find_latest(game_version, stable) {
                     Some(v) => v.name().to_string(),
                     None => {
                         return Err(Error::LatestVersionNotFound {
@@ -144,114 +144,14 @@ impl Installer {
                     return Ok(game);
                 };
 
-                // Using this outer loop to break when some reason to install is met.
-                loop {
-                    fn check_exists(file: &Path) -> bool {
-                        fs::exists(file).unwrap_or_default()
-                    }
-
-                    let libs_dir = mojang.base().libraries_dir();
-
-                    // Start by checking patched client and universal client.
-                    if check_libraries.has_loader_client()
-                        && let Some(client_gav) = config.name.with_classifier(Some("client"))
-                        && !check_exists(&libs_dir.join(client_gav.file()))
-                    {
-                        break InstallReason::MissingPatchedClient;
-                    }
-
-                    if check_libraries.has_loader_universal()
-                        && let Some(universal_gav) = config.name.with_classifier(Some("universal"))
-                        && !check_exists(&libs_dir.join(universal_gav.file()))
-                    {
-                        break InstallReason::MissingUniversalClient;
-                    }
-
-                    if check_libraries == InstallConfigCheckLibraries::ForgeV1
-                        || check_libraries == InstallConfigCheckLibraries::ForgeV2
-                    {
-                        // We analyze game argument to try find which libraries are
-                        // absolutely required for the game to run, there has been so
-                        // many way of launching the game in the Forge/NeoForge history
-                        // that it's complicated to ensure that we can accurately
-                        // determine if the mod loader is properly installed.
-                        let mut mcp_version = None;
-                        let mut args_iter = game.game_args.iter();
-                        while let Some(arg) = args_iter.next() {
-                            match arg.as_str() {
-                                "--fml.neoFormVersion" | "--fml.mcpVersion" => {
-                                    let Some(version) = args_iter.next() else {
-                                        continue;
-                                    };
-                                    mcp_version = Some(version.as_str());
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        // If there is a MCP version to check, we go check if client
-                        // extra, slim and srg files are present, or not, they are loaded
-                        // dynamically by the mod loader.
-                        if let Some(mcp_version) = mcp_version {
-                            let mcp_artifact = libs_dir
-                                .join("net")
-                                .joined("minecraft")
-                                .joined("client")
-                                .joined(&config.game_version)
-                                .appended("-")
-                                .appended(mcp_version)
-                                .joined("client")
-                                .appended("-")
-                                .appended(&config.game_version)
-                                .appended("-")
-                                .appended(mcp_version)
-                                .appended("-");
-
-                            if !check_exists(&mcp_artifact.append("srg.jar")) {
-                                break InstallReason::MissingClientSrg;
-                            }
-
-                            if check_libraries == InstallConfigCheckLibraries::ForgeV2 {
-                                if !check_exists(&mcp_artifact.append("extra.jar")) {
-                                    break InstallReason::MissingClientExtra;
-                                }
-                            } else {
-                                let mc_artifact = libs_dir
-                                    .join("net")
-                                    .joined("minecraft")
-                                    .joined("client")
-                                    .joined(&config.game_version)
-                                    .joined("client")
-                                    .appended("-")
-                                    .appended(&config.game_version)
-                                    .appended("-");
-
-                                if !check_exists(&mc_artifact.append("extra.jar"))
-                                    && !check_exists(&mc_artifact.append("extra-stable.jar"))
-                                {
-                                    break InstallReason::MissingClientExtra;
-                                }
-                            }
-                        }
-                    } else if check_libraries == InstallConfigCheckLibraries::NeoForgeV1 {
-                        let patched_client_artifact = libs_dir
-                            .join("net")
-                            .joined("neoforged")
-                            .joined("minecraft-client-patched")
-                            .joined(config.name.version())
-                            .joined("minecraft-client-patched")
-                            .appended("-")
-                            .appended(config.name.version())
-                            .appended(".jar");
-
-                        if !check_exists(&patched_client_artifact) {
-                            break InstallReason::MissingPatchedClient;
-                        }
-                    }
-
+                let Some(install_reason) =
+                    find_reason_to_install(&game, mojang, &config, check_libraries)
+                else {
                     // No reason to reinstall, we return the game as-is.
                     return Ok(game);
-                }
+                };
+
+                install_reason
             }
             Err(moj::Error::Base(base::Error::VersionNotFound { version }))
                 if version == root_version =>
@@ -280,6 +180,118 @@ impl Installer {
         let game = mojang.install((&mut *handler).into_mojang())?;
         Ok(game)
     }
+}
+
+fn find_reason_to_install(
+    game: &Game,
+    mojang: &moj::Installer,
+    config: &InstallConfig,
+    check_libraries: InstallConfigCheckLibraries,
+) -> Option<InstallReason> {
+    fn check_exists(file: &Path) -> bool {
+        fs::exists(file).unwrap_or_default()
+    }
+
+    let libs_dir = mojang.base().libraries_dir();
+
+    // Start by checking patched client and universal client.
+    if check_libraries.has_loader_client()
+        && let Some(client_gav) = config.name.with_classifier(Some("client"))
+        && !check_exists(&libs_dir.join(client_gav.file()))
+    {
+        return Some(InstallReason::MissingPatchedClient);
+    }
+
+    if check_libraries.has_loader_universal()
+        && let Some(universal_gav) = config.name.with_classifier(Some("universal"))
+        && !check_exists(&libs_dir.join(universal_gav.file()))
+    {
+        return Some(InstallReason::MissingUniversalClient);
+    }
+
+    if check_libraries == InstallConfigCheckLibraries::ForgeV1
+        || check_libraries == InstallConfigCheckLibraries::ForgeV2
+    {
+        // We analyze game argument to try find which libraries are
+        // absolutely required for the game to run, there has been so
+        // many way of launching the game in the Forge/NeoForge history
+        // that it's complicated to ensure that we can accurately
+        // determine if the mod loader is properly installed.
+        let mut mcp_version = None;
+        let mut args_iter = game.game_args.iter();
+        while let Some(arg) = args_iter.next() {
+            match arg.as_str() {
+                "--fml.neoFormVersion" | "--fml.mcpVersion" => {
+                    let Some(version) = args_iter.next() else {
+                        continue;
+                    };
+                    mcp_version = Some(version.as_str());
+                }
+                _ => {}
+            }
+        }
+
+        // If there is a MCP version to check, we go check if client
+        // extra, slim and srg files are present, or not, they are loaded
+        // dynamically by the mod loader.
+        if let Some(mcp_version) = mcp_version {
+            let mcp_artifact = libs_dir
+                .join("net")
+                .joined("minecraft")
+                .joined("client")
+                .joined(&config.game_version)
+                .appended("-")
+                .appended(mcp_version)
+                .joined("client")
+                .appended("-")
+                .appended(&config.game_version)
+                .appended("-")
+                .appended(mcp_version)
+                .appended("-");
+
+            if !check_exists(&mcp_artifact.append("srg.jar")) {
+                return Some(InstallReason::MissingClientSrg);
+            }
+
+            if check_libraries == InstallConfigCheckLibraries::ForgeV2 {
+                if !check_exists(&mcp_artifact.append("extra.jar")) {
+                    return Some(InstallReason::MissingClientExtra);
+                }
+            } else {
+                let mc_artifact = libs_dir
+                    .join("net")
+                    .joined("minecraft")
+                    .joined("client")
+                    .joined(&config.game_version)
+                    .joined("client")
+                    .appended("-")
+                    .appended(&config.game_version)
+                    .appended("-");
+
+                if !check_exists(&mc_artifact.append("extra.jar"))
+                    && !check_exists(&mc_artifact.append("extra-stable.jar"))
+                {
+                    return Some(InstallReason::MissingClientExtra);
+                }
+            }
+        }
+    } else if check_libraries == InstallConfigCheckLibraries::NeoForgeV1 {
+        let patched_client_artifact = libs_dir
+            .join("net")
+            .joined("neoforged")
+            .joined("minecraft-client-patched")
+            .joined(config.name.version())
+            .joined("minecraft-client-patched")
+            .appended("-")
+            .appended(config.name.version())
+            .appended(".jar");
+
+        if !check_exists(&patched_client_artifact) {
+            return Some(InstallReason::MissingPatchedClient);
+        }
+    }
+
+    None
 }
 
 /// Events happening when installing.
@@ -570,6 +582,7 @@ impl Repo {
     /// Find the latest loader version given, optionally with a specified game version
     /// and stable or not. Note that the latest stable version is also the latest unstable
     /// one if no version is unstable before it.
+    #[allow(clippy::useless_format)]
     pub fn find_latest(&self, game_version: &str, stable: bool) -> Option<RepoVersion<'_>> {
         // Parse the game version to build a prefix to match versions against.
         let prefix = if !self.neoforge {
@@ -981,8 +994,8 @@ fn try_install(
     let libraries_dir = base::canonicalize_file(mojang.base().libraries_dir())?;
     let game_version_dir = mojang.base().versions_dir().join(&config.game_version);
     let game_client_file = game_version_dir.join_with_extension(&config.game_version, "jar");
-    let root_version_dir = mojang.base().versions_dir().join(&root_version);
-    let metadata_file = root_version_dir.join_with_extension(&root_version, "json");
+    let root_version_dir = mojang.base().versions_dir().join(root_version);
+    let metadata_file = root_version_dir.join_with_extension(root_version, "json");
     let mut metadata;
 
     match profile {
@@ -1141,14 +1154,13 @@ fn try_install(
             // Now we process each post-processor in order, each processor will refer to
             // one of the library installed earlier.
             for processor in &profile.processors {
-                if let Some(processor_sides) = &processor.sides {
-                    if !processor_sides
+                if let Some(processor_sides) = &processor.sides
+                    && !processor_sides
                         .iter()
                         .copied()
                         .any(|processor_side| processor_side == side)
-                    {
-                        continue;
-                    }
+                {
+                    continue;
                 }
 
                 let Some(jar_file) = libraries.get(&processor.jar) else {
@@ -1157,7 +1169,7 @@ fn try_install(
                     });
                 };
 
-                let Some(main_class) = find_jar_main_class(&jar_file)? else {
+                let Some(main_class) = find_jar_main_class(jar_file)? else {
                     return Err(Error::InstallerProcessorMainClassNotFound {
                         name: processor.jar.clone(),
                     });
@@ -1194,7 +1206,7 @@ fn try_install(
                 command.arg("-cp").arg(class_path).arg(&main_class);
 
                 for arg in &processor.args {
-                    if let Some(arg) = format_processor_arg(&arg, &libraries_dir, &data) {
+                    if let Some(arg) = format_processor_arg(arg, &libraries_dir, &data) {
                         command.arg(arg);
                     } else {
                         // Ignore malformed arguments for now.
@@ -1216,10 +1228,10 @@ fn try_install(
                 // If process SHA-1 check is enabled...
                 if config.check_processor_outputs {
                     for (file, sha1) in &processor.outputs {
-                        let Some(file) = format_processor_arg(&file, &libraries_dir, &data) else {
+                        let Some(file) = format_processor_arg(file, &libraries_dir, &data) else {
                             continue;
                         };
-                        let Some(sha1) = format_processor_arg(&sha1, &libraries_dir, &data) else {
+                        let Some(sha1) = format_processor_arg(sha1, &libraries_dir, &data) else {
                             continue;
                         };
                         let Some(sha1) = crate::serde::parse_hex_bytes::<20>(&sha1) else {
@@ -1258,7 +1270,7 @@ fn try_install(
             // Extract the universal JAR file of the mod loader.
             let jar_file = libraries_dir.join(profile.install.path.file());
             let jar_entry = &profile.install.file_path[..];
-            extract_installer_file(installer_file, &mut installer_zip, &jar_entry, &jar_file)?;
+            extract_installer_file(installer_file, &mut installer_zip, jar_entry, &jar_file)?;
         }
     }
 
@@ -1296,7 +1308,7 @@ fn format_processor_arg(
 ) -> Option<String> {
     if matches!(input.as_bytes(), [b'[', .., b']']) {
         let gav = input[1..input.len() - 1].parse::<Gav>().ok()?;
-        return Some(format!("{}", libraries_dir.join(&gav.file()).display()));
+        return Some(format!("{}", libraries_dir.join(gav.file()).display()));
     }
 
     #[derive(Debug)]
@@ -1324,8 +1336,7 @@ fn format_processor_arg(
             '}' if !escape && matches!(token, Some(TokenKind::Data)) => {
                 match data.get(&token_buf)? {
                     InstallDataTypedEntry::Library(gav) => {
-                        write!(global_buf, "{}", libraries_dir.join(&gav.file()).display())
-                            .unwrap();
+                        write!(global_buf, "{}", libraries_dir.join(gav.file()).display()).unwrap();
                     }
                     InstallDataTypedEntry::Literal(lit) => {
                         global_buf.push_str(lit);
@@ -1380,7 +1391,7 @@ fn extract_installer_file<R: Read + Seek>(
 ) -> Result<()> {
     let mut reader =
         installer_zip
-            .by_name(&src_entry)
+            .by_name(src_entry)
             .map_err(|_| Error::InstallerFileNotFound {
                 entry: src_entry.to_string(),
             })?;
@@ -1452,6 +1463,7 @@ fn parse_generic_version<const MAX: usize, const MIN: usize>(
     }
     let mut it = version.split('.');
     let mut ret = [0; MAX];
+    #[allow(clippy::needless_range_loop)]
     for i in 0..MAX {
         ret[i] = match it.next() {
             Some(raw) => raw.parse::<u16>().ok()?,

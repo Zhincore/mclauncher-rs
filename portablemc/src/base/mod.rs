@@ -614,7 +614,7 @@ impl Installer {
         features: &HashSet<String>,
         batch: &mut Batch,
     ) -> Result<LibrariesFiles> {
-        let client_file = self.load_client(&mut *handler, &hierarchy, &mut *batch)?;
+        let client_file = self.load_client(&mut *handler, hierarchy, &mut *batch)?;
 
         handler.on_event(Event::LoadLibraries);
 
@@ -657,7 +657,7 @@ impl Installer {
                         );
                         new_gav = lib_gav.with_classifier(Some(&classifier));
                     } else {
-                        new_gav = lib_gav.with_classifier(Some(&classifier));
+                        new_gav = lib_gav.with_classifier(Some(classifier));
                     }
 
                     // Ignore that new GAV if the gav cannot be constructed!
@@ -671,10 +671,10 @@ impl Installer {
                 // Start by applying rules before the actual parsing. Important, we do
                 // that after checking natives, so this will override the lib state if
                 // rejected, and we still benefit from classifier resolution.
-                if let Some(lib_rules) = &lib.rules {
-                    if !self.check_rules(lib_rules, features, None) {
-                        continue;
-                    }
+                if let Some(lib_rules) = &lib.rules
+                    && !self.check_rules(lib_rules, features, None)
+                {
+                    continue;
                 }
 
                 // Clone the spec with wildcard for version because we shouldn't override
@@ -695,17 +695,15 @@ impl Installer {
 
                 let lib_obj = libraries.last_mut().unwrap();
 
-                let lib_dl;
-                if lib_obj.natives {
+                let lib_dl = if lib_obj.natives {
                     // Unwrap because as seen above, if there are native with define a
                     // classifier on the GAV.
-                    lib_dl = lib
-                        .downloads
+                    lib.downloads
                         .classifiers
-                        .get(lib_obj.name.classifier().unwrap());
+                        .get(lib_obj.name.classifier().unwrap())
                 } else {
-                    lib_dl = lib.downloads.artifact.as_ref();
-                }
+                    lib.downloads.artifact.as_ref()
+                };
 
                 if let Some(lib_dl) = lib_dl {
                     lib_obj.path = lib_dl.path.as_ref().map(PathBuf::from);
@@ -734,10 +732,10 @@ impl Installer {
 
                 // Additional check because libraries with empty URLs have been seen in
                 // the wild, so we remove the source if its URL is empty.
-                if let Some(lib_source) = &lib_obj.download {
-                    if lib_source.url.is_empty() {
-                        lib_obj.download = None;
-                    }
+                if let Some(lib_source) = &lib_obj.download
+                    && lib_source.url.is_empty()
+                {
+                    lib_obj.download = None;
                 }
             }
         }
@@ -761,7 +759,7 @@ impl Installer {
                 self.libraries_dir
                     .join(check_path_relative_and_safe(lib_rel_path)?)
             } else {
-                self.libraries_dir.join(&lib.name.file())
+                self.libraries_dir.join(lib.name.file())
             };
 
             // If no repository URL is given, no more download method is available,
@@ -936,7 +934,7 @@ impl Installer {
                     // Note that 'src_file' has been canonicalized and therefore we have
                     // no issue of relative linking.
                     let dst_file = bin_dir.join(file_name);
-                    symlink_or_copy_file(&src_file, &dst_file)?;
+                    symlink_or_copy_file(src_file, &dst_file)?;
                 }
             }
         }
@@ -1016,13 +1014,11 @@ impl Installer {
                     download: Some(&asset_index.download),
                     id: &asset_index.id,
                 })
-            } else if let Some(asset_id) = &version.metadata.assets {
-                Some(IndexInfo {
-                    download: None,
-                    id: &asset_id,
-                })
             } else {
-                None
+                version.metadata.assets.as_ref().map(|asset_id| IndexInfo {
+                    download: None,
+                    id: asset_id,
+                })
             }
         });
 
@@ -1041,14 +1037,14 @@ impl Installer {
         // index identifier, we check the file against the download information and then
         // download this single file. If the file has no download info
         let mut index_downloaded = false;
-        if let Some(dl) = index_info.download {
-            if !check_file(&index_file, dl.size, dl.sha1.as_deref())? {
-                download::single(dl.url.clone(), index_file.clone())
-                    .set_expected_size(dl.size)
-                    .set_expected_sha1(dl.sha1.as_deref().copied())
-                    .download((&mut *handler).into_download())?;
-                index_downloaded = true;
-            }
+        if let Some(dl) = index_info.download
+            && !check_file(&index_file, dl.size, dl.sha1.as_deref())?
+        {
+            download::single(dl.url.clone(), index_file.clone())
+                .set_expected_size(dl.size)
+                .set_expected_sha1(dl.sha1.as_deref().copied())
+                .download((&mut *handler).into_download())?;
+            index_downloaded = true;
         }
 
         // Scoped to release the reader.
@@ -1240,7 +1236,7 @@ impl Installer {
         let jvm = if let Some(distribution) = distribution {
             match self.jvm_policy {
                 JvmPolicy::Static(ref file) => {
-                    Some(self.load_static_jvm(handler, &file, major_version)?)
+                    Some(self.load_static_jvm(handler, file, major_version)?)
                 }
                 JvmPolicy::System => self.load_system_jvm(handler, major_version)?,
                 JvmPolicy::Mojang => self.load_mojang_jvm(handler, distribution, batch)?,
@@ -1262,7 +1258,7 @@ impl Installer {
         } else {
             match self.jvm_policy {
                 JvmPolicy::Static(ref file) => {
-                    Some(self.load_static_jvm(handler, &file, major_version)?)
+                    Some(self.load_static_jvm(handler, file, major_version)?)
                 }
                 JvmPolicy::System | JvmPolicy::SystemThenMojang | JvmPolicy::MojangThenSystem => {
                     self.load_system_jvm(handler, major_version)?
@@ -1408,10 +1404,10 @@ impl Installer {
             });
 
             // Don't replace the min score JVM if we are greater or equal.
-            if let Some((_, min_score)) = min_score_jvm {
-                if min_score <= score {
-                    continue;
-                }
+            if let Some((_, min_score)) = min_score_jvm
+                && min_score <= score
+            {
+                continue;
             }
 
             min_score_jvm = Some((jvm, score));
@@ -1461,7 +1457,7 @@ impl Installer {
         };
 
         // We take the first variant for now.
-        let Some(meta_variant) = meta_distribution.variants.get(0) else {
+        let Some(meta_variant) = meta_distribution.variants.first() else {
             handler.on_event(Event::WarnJvmMissingDistribution);
             return Ok(None);
         };
@@ -1646,7 +1642,7 @@ impl Installer {
 
             let mut perm = exec_file
                 .metadata()
-                .map_err(|e| Error::new_io_file(e, &exec_file))?
+                .map_err(|e| Error::new_io_file(e, exec_file))?
                 .permissions();
 
             // Set executable permission for every owner/group/other with read access.
@@ -1679,19 +1675,18 @@ impl Installer {
     ) {
         for arg in args {
             // If the argument is conditional then we check rule.
-            if let serde::VersionArgument::Conditional(cond) = arg {
-                if let Some(rules) = &cond.rules {
-                    if !self.check_rules(rules, features, all_features.as_deref_mut()) {
-                        continue;
-                    }
-                }
+            if let serde::VersionArgument::Conditional(cond) = arg
+                && let Some(rules) = &cond.rules
+                && !self.check_rules(rules, features, all_features.as_deref_mut())
+            {
+                continue;
             }
 
             match arg {
                 serde::VersionArgument::Raw(val) => dest.push(val.clone()),
                 serde::VersionArgument::Conditional(cond) => match &cond.value {
                     serde::SingleOrVec::Single(val) => dest.push(val.clone()),
-                    serde::SingleOrVec::Vec(vals) => dest.extend_from_slice(&vals),
+                    serde::SingleOrVec::Vec(vals) => dest.extend_from_slice(vals),
                 },
             }
         }
@@ -2409,7 +2404,7 @@ pub(crate) fn check_file_advanced(
                     Ok(true)
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(not_found_valid),
-                Err(e) => return Err(e),
+                Err(e) => Err(e),
             }
         } else {
             match (file.metadata(), size) {
@@ -2418,7 +2413,7 @@ pub(crate) fn check_file_advanced(
                 // File is existing but we don't have size to check, no need to download.
                 (Ok(_metadata), None) => Ok(true),
                 (Err(e), _) if e.kind() == io::ErrorKind::NotFound => Ok(not_found_valid),
-                (Err(e), _) => return Err(e),
+                (Err(e), _) => Err(e),
             }
         }
     }
@@ -2428,7 +2423,7 @@ pub(crate) fn check_file_advanced(
 }
 
 /// Apply arguments replacement for each string, explained in [`replace_string_args`].
-fn replace_strings_args<'input, F>(ss: &mut [String], mut func: F)
+fn replace_strings_args<F>(ss: &mut [String], mut func: F)
 where
     F: FnMut(&str) -> Option<String>,
 {
@@ -2467,10 +2462,10 @@ where
 /// Parse a JVM major version, this supports pre-v9 versions.
 fn parse_jvm_major_version(version: &str) -> Option<u32> {
     // Special case for parsing versions such as '8u51'.
-    if !version.contains('.') {
-        if let Some((major, _patch)) = version.split_once('u') {
-            return major.parse::<u32>().ok();
-        }
+    if !version.contains('.')
+        && let Some((major, _patch)) = version.split_once('u')
+    {
+        return major.parse::<u32>().ok();
     }
 
     let mut comp = version.split('.');

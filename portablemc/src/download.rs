@@ -101,6 +101,7 @@ pub struct Batch {
 
 impl Batch {
     /// Create a new empty download list.
+    #[allow(clippy::new_without_default)]
     #[inline]
     pub fn new() -> Self {
         Self {
@@ -689,7 +690,7 @@ async fn download_many(
                 debug_assert!(prev_res.is_none());
             }
             Some(progress) = progress_rx.recv() => {
-                size += progress as u32;
+                size += progress;
             }
             else => {
                 // Just ignore, because it's invalid state, in case of join_next we
@@ -840,8 +841,9 @@ async fn download_entry(
 
     // Checking if the status is not OK, if this is a NOT_MODIFIED then we returned the
     // file as-is, with the handle if keep open is requested.
-    if res.status() == StatusCode::NOT_MODIFIED && cache.is_some() {
-        let (handle, cache_meta) = cache.unwrap();
+    if res.status() == StatusCode::NOT_MODIFIED
+        && let Some((handle, cache_meta)) = cache
+    {
         return Ok(EntrySuccessInner {
             size: cache_meta.size,
             sha1: cache_meta.sha1.0,
@@ -901,16 +903,16 @@ async fn download_entry(
 
                 let sha1 = sha1.finalize();
 
-                if let Some(expected_size) = entry.expected_size {
-                    if expected_size != size {
-                        break (false, EntryErrorKind::InvalidSize);
-                    }
+                if let Some(expected_size) = entry.expected_size
+                    && expected_size != size
+                {
+                    break (false, EntryErrorKind::InvalidSize);
                 }
 
-                if let Some(expected_sha1) = &entry.expected_sha1 {
-                    if expected_sha1 != sha1.as_slice() {
-                        break (false, EntryErrorKind::InvalidSha1);
-                    }
+                if let Some(expected_sha1) = &entry.expected_sha1
+                    && expected_sha1 != sha1.as_slice()
+                {
+                    break (false, EntryErrorKind::InvalidSha1);
                 }
 
                 break 'success (size, sha1);
@@ -941,7 +943,7 @@ async fn download_entry(
             try_num += 1;
 
             // Scope the error in this closure...
-            let rewind_res = async || -> Result<(), EntryErrorKind> {
+            let rewind_res = async {
                 file.rewind().await.map_err(EntryErrorKind::new_io)?;
                 file.set_len(0).await.map_err(EntryErrorKind::new_io)?;
 
@@ -955,7 +957,7 @@ async fn download_entry(
                 }
 
                 Ok(())
-            }()
+            }
             .await;
 
             // If no error, retry, if error just fallthrough to the cleanup code below!

@@ -505,7 +505,7 @@ impl Installer {
         let mut game = {
             let mut handler = InternalHandler {
                 inner: &mut *handler,
-                installer: &inner,
+                installer: inner,
                 error: Ok(()),
                 manifest,
                 leaf_version: &mut leaf_version,
@@ -530,7 +530,7 @@ impl Installer {
                 }
                 "auth_session" => String::new(),
                 "user_type" => inner.auth_type.clone(),
-                "user_properties" => format!("{{}}"),
+                "user_properties" => "{{}}".to_string(),
                 "clientid" => inner.client_id.clone(),
                 _ => return None,
             })
@@ -562,18 +562,19 @@ impl Installer {
                 }
             });
 
-            if !quick_play_supported && inner.fix_legacy_quick_play {
-                if let QuickPlay::Multiplayer { host, port } = quick_play {
-                    game.game_args.extend([
-                        "--server".to_string(),
-                        host.clone(),
-                        "--port".to_string(),
-                        port.to_string(),
-                    ]);
+            if !quick_play_supported
+                && inner.fix_legacy_quick_play
+                && let QuickPlay::Multiplayer { host, port } = quick_play
+            {
+                game.game_args.extend([
+                    "--server".to_string(),
+                    host.clone(),
+                    "--port".to_string(),
+                    port.to_string(),
+                ]);
 
-                    quick_play_supported = true;
-                    handler.on_event(Event::FixedLegacyQuickPlay);
-                }
+                quick_play_supported = true;
+                handler.on_event(Event::FixedLegacyQuickPlay);
             }
 
             if !quick_play_supported {
@@ -596,6 +597,7 @@ impl Installer {
             };
 
             if let Some(proxy_port) = proxy_port {
+                #[allow(clippy::useless_format)]
                 game.jvm_args.push(format!("-Dhttp.proxyHost=betacraft.uk"));
                 game.jvm_args.push(format!("-Dhttp.proxyPort={proxy_port}"));
                 handler.on_event(Event::FixedLegacyProxy {
@@ -805,7 +807,7 @@ pub struct Manifest {
 impl Manifest {
     /// Request the Mojang versions' manifest.
     pub fn request(mut handler: impl download::Handler) -> Result<Self> {
-        return Self::request_dyn(&mut handler);
+        Self::request_dyn(&mut handler)
     }
 
     fn request_dyn(handler: &mut dyn download::Handler) -> Result<Self> {
@@ -926,7 +928,7 @@ struct InternalHandler<'a> {
 impl<'a> base::Handler for InternalHandler<'a> {
     fn on_event(&mut self, mut event: base::Event) {
         let ret = match event {
-            base::Event::FilterFeatures { ref mut features } => self.filter_features(*features),
+            base::Event::FilterFeatures { ref mut features } => self.filter_features(features),
             base::Event::LoadedHierarchy { hierarchy } => self.loaded_hierarchy(hierarchy),
             base::Event::LoadVersion { version, file } => self.load_version(version, file),
             base::Event::NeedVersion {
@@ -941,7 +943,7 @@ impl<'a> base::Handler for InternalHandler<'a> {
                 Ok(false) => Ok(()),
                 Err(e) => Err(e),
             },
-            base::Event::FilterLibraries { ref mut libraries } => self.filter_libraries(*libraries),
+            base::Event::FilterLibraries { ref mut libraries } => self.filter_libraries(libraries),
             _ => Ok(()),
         };
 
@@ -1056,7 +1058,7 @@ impl InternalHandler<'_> {
         Ok(())
     }
 
-    fn apply_fix_broken_authlib(&mut self, libraries: &mut Vec<LoadedLibrary>) -> Result<()> {
+    fn apply_fix_broken_authlib(&mut self, libraries: &mut [LoadedLibrary]) -> Result<()> {
         // Unwrap because we don't exceed length limit for sure.
         let target_gav = Gav::new("com.mojang", "authlib", "2.1.28", None, None).unwrap();
         let pos = libraries.iter().position(|lib| lib.name == target_gav);

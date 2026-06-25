@@ -89,7 +89,7 @@ impl Gav {
         let mut split = raw.split('@');
         let raw0 = split.next()?;
         let (extension_len, strip_jar) = match split.next() {
-            Some(s) if s == "jar" => (None, true),
+            Some("jar") => (None, true),
             Some(s) => (Some(NonZero::new(s.len() as _)?), false),
             None => (None, false),
         };
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn from_str_correct() {
-        const WRONG_CASES: &'static [&'static str] = &[
+        const WRONG_CASES: &[&str] = &[
             "",
             ":",
             "::",

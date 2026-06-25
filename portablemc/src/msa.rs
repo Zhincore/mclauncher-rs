@@ -227,6 +227,7 @@ impl DeviceCodeFlow {
 
                     break Ok(account);
                 }
+                #[allow(clippy::wildcard_in_or_patterns)]
                 Err(res) => match res.error.as_str() {
                     "authorization_pending" => continue,
                     "authorization_declined" => break Err(AuthError::Declined),
@@ -418,25 +419,25 @@ async fn request_minecraft_account(
     ms_auth_token: &str,
 ) -> Result<MinecraftAccount, AuthError> {
     // XBL authentication and authorization...
-    let user_res = request_xbl_user(&client, ms_auth_token).await?;
-    let xsts_res = request_xbl_xsts(&client, &user_res.token).await?;
+    let user_res = request_xbl_user(client, ms_auth_token).await?;
+    let xsts_res = request_xbl_xsts(client, &user_res.token).await?;
 
     // Now checking coherency...
     if user_res.display_claims.xui.is_empty()
         || user_res.display_claims.xui != xsts_res.display_claims.xui
     {
-        return Err(AuthError::Unknown(format!(
-            "Invalid or incoherent display claims."
-        )));
+        return Err(AuthError::Unknown(
+            "Invalid or incoherent display claims.".to_string(),
+        ));
     }
 
     let user_hash = xsts_res.display_claims.xui[0].uhs.as_str();
     let xsts_token = xsts_res.token.as_str();
 
     // Minecraft with XBL...
-    let mc_res = request_minecraft_with_xbl(&client, user_hash, xsts_token).await?;
+    let mc_res = request_minecraft_with_xbl(client, user_hash, xsts_token).await?;
     // Minecraft profile...
-    let profile_res = request_minecraft_profile(&client, &mc_res.access_token).await?;
+    let profile_res = request_minecraft_profile(client, &mc_res.access_token).await?;
 
     Ok(MinecraftAccount {
         app_id: String::new(),
@@ -471,7 +472,7 @@ async fn request_xbl_user(client: &Client, ms_auth_token: &str) -> Result<XblSuc
             .json::<XblSuccess>()
             .await
             .map_err(AuthError::new_reqwest)?),
-        status => return Err(AuthError::InvalidStatus(status.as_u16())),
+        status => Err(AuthError::InvalidStatus(status.as_u16())),
     }
 }
 
@@ -502,9 +503,9 @@ async fn request_xbl_xsts(client: &Client, xbl_user_token: &str) -> Result<XblSu
                 .json::<XblError>()
                 .await
                 .map_err(AuthError::new_reqwest)?;
-            return Err(AuthError::Unknown(res.message));
+            Err(AuthError::Unknown(res.message))
         }
-        status => return Err(AuthError::InvalidStatus(status.as_u16())),
+        status => Err(AuthError::InvalidStatus(status.as_u16())),
     }
 }
 
@@ -559,13 +560,12 @@ async fn request_minecraft_profile(
             .await
             .map_err(AuthError::new_reqwest)?),
         StatusCode::FORBIDDEN => {
-            return Err(AuthError::Unknown(format!(
-                "Forbidden access to api.minecraftservices.com, likely because the application lacks approval from Mojang, see https://minecraft.wiki/w/Microsoft_authentication."
-            )));
+             Err(AuthError::Unknown(
+                "Forbidden access to api.minecraftservices.com, likely because the application lacks approval from Mojang, see https://minecraft.wiki/w/Microsoft_authentication.".to_string()))
         }
-        StatusCode::UNAUTHORIZED => return Err(AuthError::OutdatedToken),
-        StatusCode::NOT_FOUND => return Err(AuthError::DoesNotOwnGame),
-        status => return Err(AuthError::InvalidStatus(status.as_u16())),
+        StatusCode::UNAUTHORIZED =>  Err(AuthError::OutdatedToken),
+        StatusCode::NOT_FOUND =>  Err(AuthError::DoesNotOwnGame),
+        status =>  Err(AuthError::InvalidStatus(status.as_u16())),
     }
 }
 
@@ -785,6 +785,7 @@ impl Database {
             .write(true)
             .read(true)
             .create(true)
+            .truncate(false)
             .open(&self.file)?;
 
         let mut data;
@@ -855,7 +856,7 @@ impl Database {
         self.load_and_store(|data, save| {
             let index = data.accounts.iter().position(|acc| acc.uuid == uuid)?;
             *save = true;
-            Some(data.accounts.remove(index).into())
+            Some(data.accounts.remove(index))
         })
     }
 
@@ -874,7 +875,7 @@ impl Database {
                 .iter()
                 .position(|acc| acc.username == username)?;
             *save = true;
-            Some(data.accounts.remove(index).into())
+            Some(data.accounts.remove(index))
         })
     }
 
@@ -888,9 +889,9 @@ impl Database {
                 .iter()
                 .position(|acc| acc.uuid == account.uuid)
             {
-                data.accounts[index] = account.into();
+                data.accounts[index] = account;
             } else {
-                data.accounts.push(account.into());
+                data.accounts.push(account);
             }
         })
     }

@@ -380,7 +380,7 @@ impl<'de> serde::Deserialize<'de> for DateTimeChill {
                         buf.push('Z');
                     }
                     Err(e) if e.kind() == ParseErrorKind::Invalid => {
-                        if let Some(index) = v.rfind(&['+', '-']) {
+                        if let Some(index) = v.rfind(['+', '-']) {
                             // This order avoids overflows.
                             if v.len() - index == 5 && v[v.len() - 4..].is_ascii() {
                                 err = e;
