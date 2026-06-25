@@ -1,21 +1,17 @@
-[workspace]
-members = ["xtask", "portablemc", "portablemc-cli", "portablemc-ffi", "portablemc-py"]
-default-members = ["portablemc", "portablemc-cli"]
-resolver = "2"
-
-[workspace.package]
+[package]
+name = "mclauncher"
+description = "Fork of portablemc, a developer-oriented crate for launching Minecraft quickly and reliably with included support for Mojang versions and popular mod loaders. See portablemc-cli for the reference implementation."
+categories = ["games"]
 edition = "2024"
 version = "5.0.4"
-authors = ["Théo Rozier <contact@theorozier.fr>"]
-homepage = "https://github.com/theorzr/portablemc"
-repository = "https://github.com/theorzr/portablemc"
+authors = ["Théo Rozier <contact@theorozier.fr>", "Zhincore <adam@zhincore.eu>"]
+homepage = "https://github.com/Zhincore/mclauncher-rs"
+repository = "https://github.com/Zhincore/mclauncher-rs"
 license = "Apache-2.0"
 readme = "README.md"
 rust-version = "1.88.0"
 
-[workspace.dependencies]
-portablemc = { path = "portablemc", version = "=5.0.4" }
-
+[dependencies]
 # Utils
 thiserror = "2.0.3"
 
@@ -23,20 +19,22 @@ thiserror = "2.0.3"
 serde = { version = "1.0.215", features = ["derive"] }
 serde_path_to_error = "0.1.16"
 serde_json = "1.0.133"
+serde_urlencoded = "0.7.1"
 
 # Parsers
 xmlparser = "0.13.6"
 
 # Data types
-uuid = { version = "1.11.0", features = ["serde"] }
+uuid = { version = "1.11.0", features = ["serde","v5"] }
 chrono = { version = "0.4.39", features = ["serde"] }
 
 # Regex, we intentionally disable the Unicode feature to avoid bloating us.
 regex = { version = "1.11.1", default-features = false, features = ["std", "perf", "unicode-perl"] }
 
 # Crypto
+sha2 = "0.11.0"
 sha1 = "0.10.6"
-md5 = "0.7.0" 
+md5 = "0.7.0"
 jsonwebtoken = "9.3.0"
 
 # Data structures
@@ -45,8 +43,7 @@ elsa = "1.10"
 zip = "6.0.0"
 slab = "0.4.9"
 flate2 = "1.1.5"
-tar = "0.4.44"
-zip-extensions = "0.13.1"
+base64 = "0.22.1"
 
 # Sync
 once_cell = "1.20.2"
@@ -56,29 +53,22 @@ gethostname = "0.5.0"
 dunce = "1.0.5"
 os_info = "3.8.2"
 dirs = "6.0.0"
-webbrowser = "1.0.3"
-windows-registry = "0.2.0"
+rand = "0.10.1"
 
 # Async
-tokio = "1.41.1"
-reqwest = "0.12.9"
+tokio = { version = "1.41.1", features = ["rt", "rt-multi-thread", "fs", "time", "net", "macros"] }
+reqwest = { version ="0.12.9", features = ["json"] }
 
-# CLI
-clap = "4.5.53"
-clap_mangen = "0.2.31"
-ctrlc = "3.4.5"
 
-# Testing
+[dev-dependencies]
 tempfile = "3.19.1"
 mockito = "1.7.1"
+
+[profile.dev]
+incremental = true # Compile your binary in smaller steps.
 
 [profile.release]
 opt-level = 3
 strip = "debuginfo"
 codegen-units = 4
 lto = true
-
-# Profile history:
-# - Reducing codegen units from default (16) to 1 have reduced by 20% the size of 
-#   the final binary (but LTO are disabled);
-# - Increasing codegen units from 1 to 4 but set lto = true gave 10% improvement;
