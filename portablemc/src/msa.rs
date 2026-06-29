@@ -129,24 +129,30 @@ pub struct MinecraftAccount {
     pub xuid: String,
 }
 impl MinecraftAccount {
-    pub async fn request_profile(&mut self) -> Result<&str, AuthError> {
+    pub async fn request_profile(&mut self) -> Result<MinecraftProfile, AuthError> {
         let client = crate::http::builder()
             .build()
             .map_err(AuthError::new_reqwest)?;
 
-        match request_minecraft_profile(&client, &self.access_token).await {
-            Ok(r) => {
-                self.username = r.name;
-            }
-            Err(err) => match err {
-                // Token outdated, retry
-                AuthError::OutdatedToken => {
-                    self.request_refresh().await?;
+        Ok(
+            match request_minecraft_profile(&client, &self.access_token).await {
+                Ok(profile) => {
+                    self.username = profile.name.clone();
+                    profile
                 }
-                _ => return Err(err),
+                Err(err) => match err {
+                    // Token outdated, retry
+                    AuthError::OutdatedToken => {
+                        self.request_refresh().await?;
+                        MinecraftProfile {
+                            id: self.uuid,
+                            name: self.username.clone(),
+                        }
+                    }
+                    _ => return Err(err),
+                },
             },
-        };
-        Ok(&self.username)
+        )
     }
 
     /// Request account from a refresh_token
